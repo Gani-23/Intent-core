@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import ParseResult, quote, unquote, urlparse
 
 
-RUNTIME_SUPPORTED_DATABASE_BACKENDS = ("sqlite",)
+RUNTIME_SUPPORTED_DATABASE_BACKENDS = ("sqlite", "postgres")
 SQLITE_BACKENDS = {"sqlite"}
 POSTGRES_BACKENDS = {"postgres", "postgresql"}
 SQLITE_RUNTIME_DRIVER = "sqlite3"

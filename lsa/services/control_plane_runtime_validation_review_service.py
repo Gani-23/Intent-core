@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from lsa.services.datetime_utils import parse_datetime_value
 from lsa.services.control_plane_runtime_validation_service import (
     ControlPlaneRuntimeValidationService,
     ControlPlaneRuntimeValidationSummary,
@@ -389,7 +390,7 @@ class ControlPlaneRuntimeValidationReviewService:
                 assigned_reviews += 1
             else:
                 unassigned_reviews += 1
-            age_hours = max((now - datetime.fromisoformat(review.opened_at)).total_seconds() / 3600.0, 0.0)
+            age_hours = max((now - (parse_datetime_value(review.opened_at) or now)).total_seconds() / 3600.0, 0.0)
             if oldest_review_age_hours is None or age_hours > oldest_review_age_hours:
                 oldest_review_age_hours = age_hours
             sla = self._review_sla(review, fallback_policy=fallback_policy)
@@ -450,6 +451,7 @@ class ControlPlaneRuntimeValidationReviewService:
         status: str | None = None,
         owner_team: str | None = None,
         assignment_state: str | None = None,
+        actor_details: dict | None = None,
     ) -> RuntimeValidationReviewBulkActionResult:
         reviews = self.list_reviews(
             status=status,
@@ -464,6 +466,7 @@ class ControlPlaneRuntimeValidationReviewService:
                 assigned_to_team=assigned_to_team,
                 assigned_by=assigned_by,
                 assignment_note=assignment_note,
+                actor_details=actor_details,
             )
             changed.append(updated)
         return RuntimeValidationReviewBulkActionResult(
@@ -483,6 +486,7 @@ class ControlPlaneRuntimeValidationReviewService:
         status: str | None = None,
         owner_team: str | None = None,
         assignment_state: str | None = None,
+        actor_details: dict | None = None,
     ) -> RuntimeValidationReviewBulkActionResult:
         reviews = self.list_reviews(
             status=status,
@@ -496,6 +500,7 @@ class ControlPlaneRuntimeValidationReviewService:
                 resolved_by=resolved_by,
                 resolution_note=resolution_note,
                 resolution_reason=resolution_reason,
+                actor_details=actor_details,
             )
             changed.append(updated)
         return RuntimeValidationReviewBulkActionResult(
@@ -520,7 +525,7 @@ class ControlPlaneRuntimeValidationReviewService:
             effective_policy.escalation_interval_seconds or self.settings.control_plane_alert_escalation_interval_seconds
         )
         age_seconds = max(
-            (datetime.now(UTC) - datetime.fromisoformat(review.opened_at)).total_seconds(),
+            (datetime.now(UTC) - (parse_datetime_value(review.opened_at) or datetime.now(UTC))).total_seconds(),
             0.0,
         )
         sla = self._review_sla(review, fallback_policy=fallback_policy)
@@ -600,6 +605,7 @@ class ControlPlaneRuntimeValidationReviewService:
         changed_by: str,
         reason: str | None = None,
         force: bool = False,
+        actor_details: dict | None = None,
     ) -> list[RuntimeValidationGovernanceRequest]:
         fallback_policy = self._fallback_policy()
         review = self.active_review()
@@ -621,6 +627,7 @@ class ControlPlaneRuntimeValidationReviewService:
                         resolved_by=changed_by,
                         resolution_note=reason or "Governance condition cleared.",
                         resolution_reason="review_recovered",
+                        actor_details=actor_details,
                     )
                 )
             return changed
@@ -633,6 +640,7 @@ class ControlPlaneRuntimeValidationReviewService:
                     review=review,
                     changed_by=changed_by,
                     reason=reason,
+                    actor_details=actor_details,
                 )
             )
             return changed
@@ -646,6 +654,7 @@ class ControlPlaneRuntimeValidationReviewService:
                         resolved_by=changed_by,
                         resolution_note="Superseded by current governance request.",
                         resolution_reason="superseded",
+                        actor_details=actor_details,
                     )
                 )
         return changed
@@ -748,6 +757,7 @@ class ControlPlaneRuntimeValidationReviewService:
         assigned_to_team: str | None,
         assigned_by: str,
         assignment_note: str | None = None,
+        actor_details: dict | None = None,
     ) -> RuntimeValidationChangeControlRequest:
         request = self.get_change_control_request(request_id)
         if request.status != "pending_review":
@@ -767,6 +777,7 @@ class ControlPlaneRuntimeValidationReviewService:
                 "assigned_by": assigned_by,
                 "assignment_note": assignment_note,
             },
+            actor_details=actor_details,
         )
         return self.get_change_control_request(request_id)
 
@@ -777,6 +788,7 @@ class ControlPlaneRuntimeValidationReviewService:
         decision: str,
         decided_by: str,
         decision_note: str | None = None,
+        actor_details: dict | None = None,
     ) -> RuntimeValidationChangeControlRequest:
         request = self.get_change_control_request(request_id)
         if request.status != "pending_review":
@@ -797,6 +809,7 @@ class ControlPlaneRuntimeValidationReviewService:
                 "decided_by": decided_by,
                 "decision_note": decision_note,
             },
+            actor_details=actor_details,
         )
         return self.get_change_control_request(request_id)
 
@@ -810,6 +823,7 @@ class ControlPlaneRuntimeValidationReviewService:
         status: str | None = None,
         owner_team: str | None = None,
         assignment_state: str | None = None,
+        actor_details: dict | None = None,
     ) -> RuntimeValidationChangeControlBulkActionResult:
         requests = self.list_change_control_requests(
             status=status,
@@ -827,6 +841,7 @@ class ControlPlaneRuntimeValidationReviewService:
                     assigned_to_team=assigned_to_team,
                     assigned_by=assigned_by,
                     assignment_note=assignment_note,
+                    actor_details=actor_details,
                 )
             )
         return RuntimeValidationChangeControlBulkActionResult(
@@ -846,6 +861,7 @@ class ControlPlaneRuntimeValidationReviewService:
         status: str | None = None,
         owner_team: str | None = None,
         assignment_state: str | None = None,
+        actor_details: dict | None = None,
     ) -> RuntimeValidationChangeControlBulkActionResult:
         requests = self.list_change_control_requests(
             status=status,
@@ -862,6 +878,7 @@ class ControlPlaneRuntimeValidationReviewService:
                     decision=decision,
                     decided_by=decided_by,
                     decision_note=decision_note,
+                    actor_details=actor_details,
                 )
             )
         return RuntimeValidationChangeControlBulkActionResult(
@@ -884,6 +901,7 @@ class ControlPlaneRuntimeValidationReviewService:
         changed_by: str,
         reason: str | None = None,
         force: bool = False,
+        actor_details: dict | None = None,
     ) -> list[RuntimeValidationChangeControlRequest]:
         governance_requests = [
             request
@@ -904,6 +922,7 @@ class ControlPlaneRuntimeValidationReviewService:
                         resolved_by=changed_by,
                         resolution_note=reason or "Governance condition cleared.",
                         resolution_reason="governance_cleared",
+                        actor_details=actor_details,
                     )
                 )
             return changed
@@ -919,6 +938,7 @@ class ControlPlaneRuntimeValidationReviewService:
                     governance_request=governance,
                     changed_by=changed_by,
                     reason=reason,
+                    actor_details=actor_details,
                 )
             )
             return changed
@@ -932,6 +952,7 @@ class ControlPlaneRuntimeValidationReviewService:
                         resolved_by=changed_by,
                         resolution_note="Superseded by current change-control request.",
                         resolution_reason="superseded",
+                        actor_details=actor_details,
                     )
                 )
         return changed
@@ -1004,7 +1025,11 @@ class ControlPlaneRuntimeValidationReviewService:
         if review.assigned_to is not None:
             return False
         sla = self._review_sla(review, fallback_policy=fallback_policy)
-        age_hours = max((datetime.now(UTC) - datetime.fromisoformat(review.opened_at)).total_seconds() / 3600.0, 0.0)
+        age_hours = max(
+            (datetime.now(UTC) - (parse_datetime_value(review.opened_at) or datetime.now(UTC))).total_seconds()
+            / 3600.0,
+            0.0,
+        )
         return age_hours >= sla.critical_age_hours
 
     def _open_governance_request(
@@ -1013,6 +1038,7 @@ class ControlPlaneRuntimeValidationReviewService:
         review: RuntimeValidationReviewRequest,
         changed_by: str,
         reason: str | None,
+        actor_details: dict | None = None,
     ) -> RuntimeValidationGovernanceRequest:
         request_id = uuid4().hex[:16]
         self.job_service.record_maintenance_event(
@@ -1035,6 +1061,7 @@ class ControlPlaneRuntimeValidationReviewService:
                 "assigned_to": review.assigned_to,
                 "assigned_to_team": review.assigned_to_team,
             },
+            actor_details=actor_details,
         )
         return next(
             request for request in self._rebuild_governance_requests() if request.request_id == request_id
@@ -1047,6 +1074,7 @@ class ControlPlaneRuntimeValidationReviewService:
         resolved_by: str,
         resolution_note: str | None,
         resolution_reason: str,
+        actor_details: dict | None = None,
     ) -> RuntimeValidationGovernanceRequest:
         self.job_service.record_maintenance_event(
             event_type=self.GOVERNANCE_RESOLVED_EVENT_TYPE,
@@ -1059,6 +1087,7 @@ class ControlPlaneRuntimeValidationReviewService:
                 "resolution_note": resolution_note,
                 "resolution_reason": resolution_reason,
             },
+            actor_details=actor_details,
         )
         return next(
             request for request in self._rebuild_governance_requests() if request.request_id == request_id
@@ -1070,6 +1099,7 @@ class ControlPlaneRuntimeValidationReviewService:
         governance_request: RuntimeValidationGovernanceRequest,
         changed_by: str,
         reason: str | None,
+        actor_details: dict | None = None,
     ) -> RuntimeValidationChangeControlRequest:
         request_id = uuid4().hex[:16]
         self.job_service.record_maintenance_event(
@@ -1090,6 +1120,7 @@ class ControlPlaneRuntimeValidationReviewService:
                 "trigger_code": "runtime_validation_change_control_required",
                 "policy_source": governance_request.policy_source,
             },
+            actor_details=actor_details,
         )
         return next(
             request for request in self._rebuild_change_control_requests() if request.request_id == request_id
@@ -1102,6 +1133,7 @@ class ControlPlaneRuntimeValidationReviewService:
         resolved_by: str,
         resolution_note: str | None,
         resolution_reason: str,
+        actor_details: dict | None = None,
     ) -> RuntimeValidationChangeControlRequest:
         self.job_service.record_maintenance_event(
             event_type=self.CHANGE_CONTROL_RESOLVED_EVENT_TYPE,
@@ -1114,6 +1146,7 @@ class ControlPlaneRuntimeValidationReviewService:
                 "resolution_note": resolution_note,
                 "resolution_reason": resolution_reason,
             },
+            actor_details=actor_details,
         )
         return next(
             request for request in self._rebuild_change_control_requests() if request.request_id == request_id
@@ -1125,6 +1158,7 @@ class ControlPlaneRuntimeValidationReviewService:
         changed_by: str,
         reason: str | None = None,
         force: bool = False,
+        actor_details: dict | None = None,
     ) -> list[RuntimeValidationReviewRequest]:
         summary = self._build_runtime_validation_summary()
         reviews = self._rebuild_reviews()
@@ -1145,6 +1179,7 @@ class ControlPlaneRuntimeValidationReviewService:
                         resolved_by=changed_by,
                         resolution_note=reason or "Runtime proof returned to policy.",
                         resolution_reason="runtime_proof_restored",
+                        actor_details=actor_details,
                     )
                 )
             return changed
@@ -1157,18 +1192,20 @@ class ControlPlaneRuntimeValidationReviewService:
                     reason=reason,
                     summary=summary,
                     evidence_key=evidence_key,
+                    actor_details=actor_details,
                 )
             )
             return changed
 
         if force and active.evidence_key != evidence_key:
             changed.append(
-                self.resolve_review(
-                    review_id=active.review_id,
-                    resolved_by=changed_by,
-                    resolution_note="Superseded by newer runtime-validation evidence.",
-                    resolution_reason="superseded",
-                )
+                    self.resolve_review(
+                        review_id=active.review_id,
+                        resolved_by=changed_by,
+                        resolution_note="Superseded by newer runtime-validation evidence.",
+                        resolution_reason="superseded",
+                        actor_details=actor_details,
+                    )
             )
             changed.append(
                 self._open_review(
@@ -1176,6 +1213,7 @@ class ControlPlaneRuntimeValidationReviewService:
                     reason=reason,
                     summary=summary,
                     evidence_key=evidence_key,
+                    actor_details=actor_details,
                 )
             )
         return changed
@@ -1188,6 +1226,7 @@ class ControlPlaneRuntimeValidationReviewService:
         assigned_to_team: str | None,
         assigned_by: str,
         assignment_note: str | None = None,
+        actor_details: dict | None = None,
     ) -> RuntimeValidationReviewRequest:
         review = self.get_review(review_id)
         if review.status == "resolved":
@@ -1214,6 +1253,7 @@ class ControlPlaneRuntimeValidationReviewService:
                 "assigned_by": assigned_by,
                 "assignment_note": assignment_note,
             },
+            actor_details=actor_details,
         )
         return self.get_review(review_id)
 
@@ -1224,6 +1264,7 @@ class ControlPlaneRuntimeValidationReviewService:
         resolved_by: str,
         resolution_note: str | None,
         resolution_reason: str,
+        actor_details: dict | None = None,
     ) -> RuntimeValidationReviewRequest:
         review = self.get_review(review_id)
         if review.status == "resolved":
@@ -1239,6 +1280,7 @@ class ControlPlaneRuntimeValidationReviewService:
                 "resolution_note": resolution_note,
                 "resolution_reason": resolution_reason,
             },
+            actor_details=actor_details,
         )
         return self.get_review(review_id)
 
@@ -1249,6 +1291,7 @@ class ControlPlaneRuntimeValidationReviewService:
         reason: str | None,
         summary: ControlPlaneRuntimeValidationSummary,
         evidence_key: str,
+        actor_details: dict | None = None,
     ) -> RuntimeValidationReviewRequest:
         review_id = uuid4().hex[:16]
         policy, policy_source = self._effective_policy(summary.environment_name)
@@ -1275,6 +1318,7 @@ class ControlPlaneRuntimeValidationReviewService:
                 else list(policy.allowed_assignee_teams),
                 "policy_source": policy_source,
             },
+            actor_details=actor_details,
         )
         if policy.auto_assign_to is not None:
             return self.assign_review(
@@ -1283,6 +1327,7 @@ class ControlPlaneRuntimeValidationReviewService:
                 assigned_to_team=policy.auto_assign_to_team,
                 assigned_by=changed_by,
                 assignment_note="Auto-assigned by runtime-validation policy.",
+                actor_details=actor_details,
             )
         return self.get_review(review_id)
 

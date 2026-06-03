@@ -1,0 +1,17 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY targets/express-pair/package*.json ./
+RUN npm ci --omit=dev
+
+COPY targets/express-pair/server.mjs ./server.mjs
+
+ENV LSA_TARGET_HOST=0.0.0.0
+ENV LSA_APPROVED_TARGET_PORT=4011
+ENV LSA_DRIFT_TARGET_PORT=4012
+ENV NODE_OPTIONS=--max-old-space-size=96
+
+EXPOSE 4011 4012
+
+CMD ["node", "server.mjs"]

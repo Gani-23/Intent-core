@@ -2,20 +2,22 @@
 
 ## Immediate
 
-1. Keep runtime-proof review work actionable:
-   - add owner-team escalation and queue-burn views on top of deployment-readiness analytics
-   - decide when unresolved review debt should block more day-2 operator workflows, not just deployment/cutover
-2. Keep reducing mixed-backend risk:
-   - extend live Postgres runtime coverage beyond the current slices
-   - prove more of the steady-state control plane on Postgres
+1. Prove runtime telemetry and drift paths on a customer-like live target, not just shipped sidecar services or the current public third-party proof matrix already covered by active target validation and target-validation governance
+2. Add stronger external observability integration targets
+3. Replace local-only secret indirection with a stronger target secret lifecycle if real customer targets need stored credentials
+4. Harden org/team/project authz boundaries if product scope expands beyond one org
+5. Polish the new admin/workspace surfaces:
+   - tighter detail views for targets, assignments, soak telemetry, and removals
+   - faster drilldown on the workspace operations page
+   - final release packaging for the standalone frontend
 
 ## Near-term production path
 
-1. Finish the Postgres-first runtime path
-2. Add a real operator UI on top of existing API surfaces
-3. Add tenant-aware authz and RBAC
-4. Add stronger observability and deployment hardening
-5. Run live workload validation at realistic noise/scale
+1. Add fuller tenant-aware authz and RBAC if multi-org scope becomes real
+2. Keep tightening the shipped operator UI for performance, consistency, and faster detail drilldown
+3. Add stronger deployment/orchestration hardening
+4. Run live workload validation at realistic noise/scale
+5. Add production dashboard/alert integrations outside the app itself
 
 ## Breakout path
 

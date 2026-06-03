@@ -4,7 +4,7 @@ from __future__ import annotations
 CONTROL_PLANE_SCHEMA_VERSION = 1
 CONTROL_PLANE_SCHEMA_MIGRATION_ID = "2026-05-05-control-plane-schema-v1"
 CONTROL_PLANE_SCHEMA_MIGRATION_DESCRIPTION = "Bootstrap schema version tracking for the control-plane database."
-CONTROL_PLANE_RUNTIME_BACKENDS = ("sqlite",)
+CONTROL_PLANE_RUNTIME_BACKENDS = ("sqlite", "postgres")
 CONTROL_PLANE_BOOTSTRAP_BACKENDS = ("postgres",)
 CONTROL_PLANE_TABLE_NAMES = (
     "control_plane_schema_metadata",

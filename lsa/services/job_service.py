@@ -12,6 +12,11 @@ from uuid import uuid4
 from lsa.drift.trace_parser import load_trace_events
 from lsa.services.audit_service import AuditService
 from lsa.services.control_plane_alert_service import ControlPlaneAlertService
+from lsa.services.control_plane_authorization_service import (
+    AuthorizedActor,
+    ControlPlaneAuthorizationError,
+    ControlPlaneAuthorizationService,
+)
 from lsa.services.trace_collection_service import TraceCollectionRequest, TraceCollectionService
 from lsa.storage.files import JobRepository
 from lsa.storage.models import (
@@ -36,11 +41,20 @@ class JobService:
     job_lease_history_retention_days: int = 30
     history_prune_interval_seconds: float = 300.0
     control_plane_alert_service: ControlPlaneAlertService | None = None
+    control_plane_backup_operations_service: Any | None = None
+    control_plane_observability_export_service: Any | None = None
+    live_workload_target_validation_service: Any | None = None
+    operational_validation_service: Any | None = None
+    operational_validation_evidence_service: Any | None = None
     runtime_validation_review_service: Any | None = None
     deployment_readiness_service: Any | None = None
     control_plane_alert_interval_seconds: float = 60.0
     control_plane_alerts_enabled: bool = True
+    observability_export_interval_seconds: float = 900.0
+    live_workload_target_validation_interval_seconds: float = 21600.0
+    operational_validation_interval_seconds: float = 14400.0
     deployment_readiness_required_for_job_submission: bool = False
+    authorization_service: ControlPlaneAuthorizationService | None = None
     _worker_thread: Thread | None = field(init=False, default=None)
     _stop_event: Event = field(init=False, default_factory=Event)
     _lock: Lock = field(init=False, default_factory=Lock)
@@ -50,6 +64,9 @@ class JobService:
     _process_id: int = field(init=False)
     _last_prune_at: float = field(init=False, default=0.0)
     _last_alert_emit_at: float = field(init=False, default=0.0)
+    _last_observability_export_at: float = field(init=False, default=0.0)
+    _last_live_workload_target_validation_at: float = field(init=False, default=0.0)
+    _last_operational_validation_at: float = field(init=False, default=0.0)
 
     def __post_init__(self) -> None:
         self._worker_started_at = _utc_now()
@@ -98,29 +115,90 @@ class JobService:
     def is_maintenance_mode_active(self) -> bool:
         return bool(self.maintenance_mode_status()["active"])
 
-    def enable_maintenance_mode(self, *, changed_by: str, reason: str | None = None) -> dict[str, object]:
+    def enable_maintenance_mode(
+        self,
+        *,
+        changed_by: str,
+        reason: str | None = None,
+        actor_details: dict | None = None,
+    ) -> dict[str, object]:
         status = self.job_repository.set_maintenance_mode(active=True, changed_by=changed_by, reason=reason)
         self._record_maintenance_event(
             event_type="maintenance_mode_enabled",
             changed_by=changed_by,
             reason=reason,
             details={},
+            actor_details=actor_details,
         )
         return status
 
-    def disable_maintenance_mode(self, *, changed_by: str, reason: str | None = None) -> dict[str, object]:
+    def disable_maintenance_mode(
+        self,
+        *,
+        changed_by: str,
+        reason: str | None = None,
+        actor_details: dict | None = None,
+    ) -> dict[str, object]:
         status = self.job_repository.set_maintenance_mode(active=False, changed_by=changed_by, reason=reason)
         self._record_maintenance_event(
             event_type="maintenance_mode_disabled",
             changed_by=changed_by,
             reason=reason,
             details={},
+            actor_details=actor_details,
         )
         return status
 
     def emit_control_plane_alerts_if_due(self) -> list[ControlPlaneAlertRecord]:
         if not self.control_plane_alerts_enabled or self.control_plane_alert_service is None:
             return []
+        if self.control_plane_backup_operations_service is not None:
+            self.control_plane_backup_operations_service.process_scheduled_backups(
+                changed_by="system",
+                reason="scheduled backup cadence",
+            )
+        if self.control_plane_observability_export_service is not None:
+            now = monotonic()
+            if now - self._last_observability_export_at >= self.observability_export_interval_seconds:
+                self.control_plane_observability_export_service.export_snapshot(
+                    changed_by="system",
+                    reason="scheduled observability export",
+                )
+                self.control_plane_observability_export_service.prune_exports()
+                self._last_observability_export_at = now
+        if self.live_workload_target_validation_service is not None:
+            now = monotonic()
+            if now - self._last_live_workload_target_validation_at >= self.live_workload_target_validation_interval_seconds:
+                summary = self.live_workload_target_validation_service.build_summary()
+                if summary.status == "missing" or (
+                    summary.age_hours is not None
+                    and summary.age_hours * 3600.0 >= self.live_workload_target_validation_interval_seconds
+                ):
+                    self.live_workload_target_validation_service.execute(
+                        changed_by="system",
+                        reason="scheduled live workload target validation",
+                    )
+                self._last_live_workload_target_validation_at = now
+        if self.operational_validation_service is not None and self.operational_validation_evidence_service is not None:
+            now = monotonic()
+            if now - self._last_operational_validation_at >= self.operational_validation_interval_seconds:
+                summary = self.operational_validation_evidence_service.build_summary()
+                if summary.status == "missing" or (
+                    summary.age_hours is not None
+                    and summary.age_hours * 3600.0 >= self.operational_validation_interval_seconds
+                ):
+                    self.operational_validation_service.run(
+                        changed_by="system",
+                        expected_backend=self.job_repository.database.config.backend,
+                        reason="scheduled operational validation",
+                        process_backups=True,
+                        cleanup=True,
+                        run_queue_validation=False,
+                        run_live_workload_drift_proof=True,
+                        run_workload_validation=False,
+                        run_worker_recovery_validation=False,
+                    )
+                self._last_operational_validation_at = now
         now = monotonic()
         if now - self._last_alert_emit_at < self.control_plane_alert_interval_seconds:
             return []
@@ -152,6 +230,7 @@ class JobService:
         changed_by: str,
         reason: str | None = None,
         force: bool = False,
+        actor_details: dict | None = None,
     ):
         if self.runtime_validation_review_service is None:
             return []
@@ -159,6 +238,7 @@ class JobService:
             changed_by=changed_by,
             reason=reason,
             force=force,
+            actor_details=actor_details,
         )
 
     def process_runtime_validation_governance(
@@ -167,6 +247,7 @@ class JobService:
         changed_by: str,
         reason: str | None = None,
         force: bool = False,
+        actor_details: dict | None = None,
     ):
         if self.runtime_validation_review_service is None:
             return []
@@ -174,6 +255,7 @@ class JobService:
             changed_by=changed_by,
             reason=reason,
             force=force,
+            actor_details=actor_details,
         )
 
     def process_runtime_validation_change_control(
@@ -182,6 +264,7 @@ class JobService:
         changed_by: str,
         reason: str | None = None,
         force: bool = False,
+        actor_details: dict | None = None,
     ):
         if self.runtime_validation_review_service is None:
             return []
@@ -189,6 +272,7 @@ class JobService:
             changed_by=changed_by,
             reason=reason,
             force=force,
+            actor_details=actor_details,
         )
 
     def list_runtime_validation_reviews(
@@ -206,6 +290,25 @@ class JobService:
             assignment_state=assignment_state,
         )
 
+    def list_runtime_validation_reviews_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        status: str | None = None,
+        owner_team: str | None = None,
+        assignment_state: str | None = None,
+    ):
+        scoped_owner_team = (
+            owner_team
+            if self.authorization_service is None
+            else self.authorization_service.scoped_owner_team(actor, owner_team)
+        )
+        return self.list_runtime_validation_reviews(
+            status=status,
+            owner_team=scoped_owner_team,
+            assignment_state=assignment_state,
+        )
+
     def list_runtime_validation_governance_requests(
         self,
         *,
@@ -217,6 +320,23 @@ class JobService:
         return self.runtime_validation_review_service.list_governance_requests(
             status=status,
             owner_team=owner_team,
+        )
+
+    def list_runtime_validation_governance_requests_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        status: str | None = None,
+        owner_team: str | None = None,
+    ):
+        scoped_owner_team = (
+            owner_team
+            if self.authorization_service is None
+            else self.authorization_service.scoped_owner_team(actor, owner_team)
+        )
+        return self.list_runtime_validation_governance_requests(
+            status=status,
+            owner_team=scoped_owner_team,
         )
 
     def list_runtime_validation_change_control_requests(
@@ -231,6 +351,25 @@ class JobService:
         return self.runtime_validation_review_service.list_change_control_requests(
             status=status,
             owner_team=owner_team,
+            assignment_state=assignment_state,
+        )
+
+    def list_runtime_validation_change_control_requests_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        status: str | None = None,
+        owner_team: str | None = None,
+        assignment_state: str | None = None,
+    ):
+        scoped_owner_team = (
+            owner_team
+            if self.authorization_service is None
+            else self.authorization_service.scoped_owner_team(actor, owner_team)
+        )
+        return self.list_runtime_validation_change_control_requests(
+            status=status,
+            owner_team=scoped_owner_team,
             assignment_state=assignment_state,
         )
 
@@ -249,6 +388,25 @@ class JobService:
             assignment_state=assignment_state,
         )
 
+    def runtime_validation_change_control_queue_summary_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        status: str | None = None,
+        owner_team: str | None = None,
+        assignment_state: str | None = None,
+    ):
+        scoped_owner_team = (
+            owner_team
+            if self.authorization_service is None
+            else self.authorization_service.scoped_owner_team(actor, owner_team)
+        )
+        return self.runtime_validation_change_control_queue_summary(
+            status=status,
+            owner_team=scoped_owner_team,
+            assignment_state=assignment_state,
+        )
+
     def assign_runtime_validation_change_control_request(
         self,
         *,
@@ -257,6 +415,7 @@ class JobService:
         assigned_to_team: str | None,
         assigned_by: str,
         assignment_note: str | None = None,
+        actor_details: dict | None = None,
     ):
         if self.runtime_validation_review_service is None:
             raise RuntimeError("Runtime-validation review service is not configured.")
@@ -266,6 +425,36 @@ class JobService:
             assigned_to_team=assigned_to_team,
             assigned_by=assigned_by,
             assignment_note=assignment_note,
+            actor_details=actor_details,
+        )
+
+    def assign_runtime_validation_change_control_request_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        request_id: str,
+        assigned_to: str,
+        assigned_to_team: str | None,
+        assigned_by: str,
+        assignment_note: str | None = None,
+        actor_details: dict | None = None,
+    ):
+        scoped_assigned_to_team = assigned_to_team
+        if self.authorization_service is not None:
+            record = self.runtime_validation_review_service.get_change_control_request(request_id)
+            self.authorization_service.require_environment_scope(actor, record.environment_name)
+            scoped_assigned_to_team = self.authorization_service.require_team_scope(
+                actor,
+                record.owner_team,
+                assigned_to_team,
+            )
+        return self.assign_runtime_validation_change_control_request(
+            request_id=request_id,
+            assigned_to=assigned_to,
+            assigned_to_team=scoped_assigned_to_team,
+            assigned_by=assigned_by,
+            assignment_note=assignment_note,
+            actor_details=actor_details,
         )
 
     def decide_runtime_validation_change_control_request(
@@ -275,6 +464,7 @@ class JobService:
         decision: str,
         decided_by: str,
         decision_note: str | None = None,
+        actor_details: dict | None = None,
     ):
         if self.runtime_validation_review_service is None:
             raise RuntimeError("Runtime-validation review service is not configured.")
@@ -283,6 +473,29 @@ class JobService:
             decision=decision,
             decided_by=decided_by,
             decision_note=decision_note,
+            actor_details=actor_details,
+        )
+
+    def decide_runtime_validation_change_control_request_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        request_id: str,
+        decision: str,
+        decided_by: str,
+        decision_note: str | None = None,
+        actor_details: dict | None = None,
+    ):
+        if self.authorization_service is not None:
+            record = self.runtime_validation_review_service.get_change_control_request(request_id)
+            self.authorization_service.require_environment_scope(actor, record.environment_name)
+            self.authorization_service.require_team_scope(actor, record.owner_team)
+        return self.decide_runtime_validation_change_control_request(
+            request_id=request_id,
+            decision=decision,
+            decided_by=decided_by,
+            decision_note=decision_note,
+            actor_details=actor_details,
         )
 
     def bulk_assign_runtime_validation_change_control_requests(
@@ -295,6 +508,7 @@ class JobService:
         status: str | None = None,
         owner_team: str | None = None,
         assignment_state: str | None = None,
+        actor_details: dict | None = None,
     ):
         if self.runtime_validation_review_service is None:
             raise RuntimeError("Runtime-validation review service is not configured.")
@@ -306,6 +520,40 @@ class JobService:
             status=status,
             owner_team=owner_team,
             assignment_state=assignment_state,
+            actor_details=actor_details,
+        )
+
+    def bulk_assign_runtime_validation_change_control_requests_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        assigned_to: str,
+        assigned_to_team: str | None,
+        assigned_by: str,
+        assignment_note: str | None = None,
+        status: str | None = None,
+        owner_team: str | None = None,
+        assignment_state: str | None = None,
+        actor_details: dict | None = None,
+    ):
+        scoped_owner_team = owner_team
+        scoped_assigned_to_team = assigned_to_team
+        if self.authorization_service is not None:
+            scoped_owner_team = self.authorization_service.scoped_owner_team(actor, owner_team)
+            scoped_assigned_to_team = self.authorization_service.require_team_scope(
+                actor,
+                scoped_owner_team,
+                assigned_to_team,
+            )
+        return self.bulk_assign_runtime_validation_change_control_requests(
+            assigned_to=assigned_to,
+            assigned_to_team=scoped_assigned_to_team,
+            assigned_by=assigned_by,
+            assignment_note=assignment_note,
+            status=status,
+            owner_team=scoped_owner_team,
+            assignment_state=assignment_state,
+            actor_details=actor_details,
         )
 
     def bulk_decide_runtime_validation_change_control_requests(
@@ -317,6 +565,7 @@ class JobService:
         status: str | None = None,
         owner_team: str | None = None,
         assignment_state: str | None = None,
+        actor_details: dict | None = None,
     ):
         if self.runtime_validation_review_service is None:
             raise RuntimeError("Runtime-validation review service is not configured.")
@@ -327,6 +576,34 @@ class JobService:
             status=status,
             owner_team=owner_team,
             assignment_state=assignment_state,
+            actor_details=actor_details,
+        )
+
+    def bulk_decide_runtime_validation_change_control_requests_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        decision: str,
+        decided_by: str,
+        decision_note: str | None = None,
+        status: str | None = None,
+        owner_team: str | None = None,
+        assignment_state: str | None = None,
+        actor_details: dict | None = None,
+    ):
+        scoped_owner_team = (
+            owner_team
+            if self.authorization_service is None
+            else self.authorization_service.scoped_owner_team(actor, owner_team)
+        )
+        return self.bulk_decide_runtime_validation_change_control_requests(
+            decision=decision,
+            decided_by=decided_by,
+            decision_note=decision_note,
+            status=status,
+            owner_team=scoped_owner_team,
+            assignment_state=assignment_state,
+            actor_details=actor_details,
         )
 
     def runtime_validation_review_queue_summary(
@@ -344,6 +621,25 @@ class JobService:
             assignment_state=assignment_state,
         )
 
+    def runtime_validation_review_queue_summary_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        status: str | None = None,
+        owner_team: str | None = None,
+        assignment_state: str | None = None,
+    ):
+        scoped_owner_team = (
+            owner_team
+            if self.authorization_service is None
+            else self.authorization_service.scoped_owner_team(actor, owner_team)
+        )
+        return self.runtime_validation_review_queue_summary(
+            status=status,
+            owner_team=scoped_owner_team,
+            assignment_state=assignment_state,
+        )
+
     def bulk_assign_runtime_validation_reviews(
         self,
         *,
@@ -354,6 +650,7 @@ class JobService:
         status: str | None = None,
         owner_team: str | None = None,
         assignment_state: str | None = None,
+        actor_details: dict | None = None,
     ):
         if self.runtime_validation_review_service is None:
             raise RuntimeError("Runtime-validation review service is not configured.")
@@ -365,6 +662,40 @@ class JobService:
             status=status,
             owner_team=owner_team,
             assignment_state=assignment_state,
+            actor_details=actor_details,
+        )
+
+    def bulk_assign_runtime_validation_reviews_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        assigned_to: str,
+        assigned_to_team: str | None,
+        assigned_by: str,
+        assignment_note: str | None = None,
+        status: str | None = None,
+        owner_team: str | None = None,
+        assignment_state: str | None = None,
+        actor_details: dict | None = None,
+    ):
+        scoped_owner_team = owner_team
+        scoped_assigned_to_team = assigned_to_team
+        if self.authorization_service is not None:
+            scoped_owner_team = self.authorization_service.scoped_owner_team(actor, owner_team)
+            scoped_assigned_to_team = self.authorization_service.require_team_scope(
+                actor,
+                scoped_owner_team,
+                assigned_to_team,
+            )
+        return self.bulk_assign_runtime_validation_reviews(
+            assigned_to=assigned_to,
+            assigned_to_team=scoped_assigned_to_team,
+            assigned_by=assigned_by,
+            assignment_note=assignment_note,
+            status=status,
+            owner_team=scoped_owner_team,
+            assignment_state=assignment_state,
+            actor_details=actor_details,
         )
 
     def bulk_resolve_runtime_validation_reviews(
@@ -376,6 +707,7 @@ class JobService:
         status: str | None = None,
         owner_team: str | None = None,
         assignment_state: str | None = None,
+        actor_details: dict | None = None,
     ):
         if self.runtime_validation_review_service is None:
             raise RuntimeError("Runtime-validation review service is not configured.")
@@ -386,6 +718,34 @@ class JobService:
             status=status,
             owner_team=owner_team,
             assignment_state=assignment_state,
+            actor_details=actor_details,
+        )
+
+    def bulk_resolve_runtime_validation_reviews_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        resolved_by: str,
+        resolution_reason: str,
+        resolution_note: str | None = None,
+        status: str | None = None,
+        owner_team: str | None = None,
+        assignment_state: str | None = None,
+        actor_details: dict | None = None,
+    ):
+        scoped_owner_team = (
+            owner_team
+            if self.authorization_service is None
+            else self.authorization_service.scoped_owner_team(actor, owner_team)
+        )
+        return self.bulk_resolve_runtime_validation_reviews(
+            resolved_by=resolved_by,
+            resolution_reason=resolution_reason,
+            resolution_note=resolution_note,
+            status=status,
+            owner_team=scoped_owner_team,
+            assignment_state=assignment_state,
+            actor_details=actor_details,
         )
 
     def assign_runtime_validation_review(
@@ -396,6 +756,7 @@ class JobService:
         assigned_to_team: str | None,
         assigned_by: str,
         assignment_note: str | None = None,
+        actor_details: dict | None = None,
     ):
         if self.runtime_validation_review_service is None:
             raise RuntimeError("Runtime-validation review service is not configured.")
@@ -405,6 +766,36 @@ class JobService:
             assigned_to_team=assigned_to_team,
             assigned_by=assigned_by,
             assignment_note=assignment_note,
+            actor_details=actor_details,
+        )
+
+    def assign_runtime_validation_review_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        review_id: str,
+        assigned_to: str,
+        assigned_to_team: str | None,
+        assigned_by: str,
+        assignment_note: str | None = None,
+        actor_details: dict | None = None,
+    ):
+        scoped_assigned_to_team = assigned_to_team
+        if self.authorization_service is not None:
+            review = self.runtime_validation_review_service.get_review(review_id)
+            self.authorization_service.require_environment_scope(actor, review.environment_name)
+            scoped_assigned_to_team = self.authorization_service.require_team_scope(
+                actor,
+                review.owner_team,
+                assigned_to_team,
+            )
+        return self.assign_runtime_validation_review(
+            review_id=review_id,
+            assigned_to=assigned_to,
+            assigned_to_team=scoped_assigned_to_team,
+            assigned_by=assigned_by,
+            assignment_note=assignment_note,
+            actor_details=actor_details,
         )
 
     def resolve_runtime_validation_review(
@@ -414,6 +805,7 @@ class JobService:
         resolved_by: str,
         resolution_note: str | None,
         resolution_reason: str,
+        actor_details: dict | None = None,
     ):
         if self.runtime_validation_review_service is None:
             raise RuntimeError("Runtime-validation review service is not configured.")
@@ -422,12 +814,45 @@ class JobService:
             resolved_by=resolved_by,
             resolution_note=resolution_note,
             resolution_reason=resolution_reason,
+            actor_details=actor_details,
+        )
+
+    def resolve_runtime_validation_review_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        review_id: str,
+        resolved_by: str,
+        resolution_note: str | None,
+        resolution_reason: str,
+        actor_details: dict | None = None,
+    ):
+        if self.authorization_service is not None:
+            review = self.runtime_validation_review_service.get_review(review_id)
+            self.authorization_service.require_environment_scope(actor, review.environment_name)
+            self.authorization_service.require_team_scope(actor, review.owner_team)
+        return self.resolve_runtime_validation_review(
+            review_id=review_id,
+            resolved_by=resolved_by,
+            resolution_note=resolution_note,
+            resolution_reason=resolution_reason,
+            actor_details=actor_details,
         )
 
     def list_control_plane_alerts(self, limit: int | None = None) -> list[ControlPlaneAlertRecord]:
         if self.control_plane_alert_service is None:
             return self.job_repository.list_control_plane_alerts(limit)
         return self.control_plane_alert_service.list_alerts(limit)
+
+    def list_control_plane_alerts_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        limit: int | None = None,
+    ) -> list[ControlPlaneAlertRecord]:
+        if self.authorization_service is not None:
+            self.authorization_service.require_environment_scope(actor, self.authorization_service.environment_name)
+        return self.list_control_plane_alerts(limit)
 
     def acknowledge_control_plane_alert(
         self,
@@ -444,6 +869,22 @@ class JobService:
                 acknowledgement_note=acknowledgement_note,
             )
         return self.control_plane_alert_service.acknowledge_alert(
+            alert_id=alert_id,
+            acknowledged_by=acknowledged_by,
+            acknowledgement_note=acknowledgement_note,
+        )
+
+    def acknowledge_control_plane_alert_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        alert_id: str,
+        acknowledged_by: str,
+        acknowledgement_note: str | None = None,
+    ) -> ControlPlaneAlertRecord:
+        if self.authorization_service is not None:
+            self.authorization_service.require_environment_scope(actor, self.authorization_service.environment_name)
+        return self.acknowledge_control_plane_alert(
             alert_id=alert_id,
             acknowledged_by=acknowledged_by,
             acknowledgement_note=acknowledgement_note,
@@ -468,15 +909,59 @@ class JobService:
             match_finding_code=match_finding_code,
         )
 
+    def create_control_plane_alert_silence_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        created_by: str,
+        reason: str,
+        duration_minutes: int,
+        match_alert_key: str | None = None,
+        match_finding_code: str | None = None,
+    ):
+        if self.authorization_service is not None:
+            self.authorization_service.require_environment_scope(actor, self.authorization_service.environment_name)
+        return self.create_control_plane_alert_silence(
+            created_by=created_by,
+            reason=reason,
+            duration_minutes=duration_minutes,
+            match_alert_key=match_alert_key,
+            match_finding_code=match_finding_code,
+        )
+
     def list_control_plane_alert_silences(self, *, active_only: bool = False):
         if self.control_plane_alert_service is None:
             return self.job_repository.list_control_plane_alert_silences()
         return self.control_plane_alert_service.list_silences(active_only=active_only)
 
+    def list_control_plane_alert_silences_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        active_only: bool = False,
+    ):
+        if self.authorization_service is not None:
+            self.authorization_service.require_environment_scope(actor, self.authorization_service.environment_name)
+        return self.list_control_plane_alert_silences(active_only=active_only)
+
     def cancel_control_plane_alert_silence(self, *, silence_id: str, cancelled_by: str):
         if self.control_plane_alert_service is None:
             raise RuntimeError("Control-plane alert service is not configured.")
         return self.control_plane_alert_service.cancel_silence(
+            silence_id=silence_id,
+            cancelled_by=cancelled_by,
+        )
+
+    def cancel_control_plane_alert_silence_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        silence_id: str,
+        cancelled_by: str,
+    ):
+        if self.authorization_service is not None:
+            self.authorization_service.require_environment_scope(actor, self.authorization_service.environment_name)
+        return self.cancel_control_plane_alert_silence(
             silence_id=silence_id,
             cancelled_by=cancelled_by,
         )
@@ -546,6 +1031,9 @@ class JobService:
                 )
         return self.job_repository.create(job_type="collect-audit", request_payload=request_payload)
 
+    def submit_validation_noop(self, request_payload: dict) -> JobRecord:
+        return self.job_repository.create(job_type="control-plane-validation-noop", request_payload=request_payload)
+
     def list_jobs(self) -> list[JobRecord]:
         return self.job_repository.list()
 
@@ -570,6 +1058,16 @@ class JobService:
     def list_control_plane_maintenance_events(self, limit: int | None = None) -> list[ControlPlaneMaintenanceEventRecord]:
         return self.job_repository.list_control_plane_maintenance_events(limit=limit)
 
+    def list_control_plane_maintenance_events_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        limit: int | None = None,
+    ) -> list[ControlPlaneMaintenanceEventRecord]:
+        if self.authorization_service is not None and not self.authorization_service.is_admin(actor):
+            raise ControlPlaneAuthorizationError("Admin role required for maintenance events.")
+        return self.list_control_plane_maintenance_events(limit=limit)
+
     def record_maintenance_event(
         self,
         *,
@@ -577,12 +1075,14 @@ class JobService:
         changed_by: str,
         reason: str | None = None,
         details: dict | None = None,
+        actor_details: dict | None = None,
     ) -> ControlPlaneMaintenanceEventRecord:
         return self._record_maintenance_event(
             event_type=event_type,
             changed_by=changed_by,
             reason=reason,
             details=details or {},
+            actor_details=actor_details,
         )
 
     def wait_for_job(self, job_id: str, timeout_seconds: float = 5.0) -> JobRecord:
@@ -681,12 +1181,16 @@ class JobService:
         try:
             result_payload = self._run_job(record)
         except Exception as exc:
-            failed = self.job_repository.get(record.job_id)
-            failed.status = "failed"
-            failed.error = str(exc)
-            failed.completed_at = _utc_now()
-            failed.lease_expires_at = None
-            self.job_repository.save(failed)
+            try:
+                failed = self.job_repository.get(record.job_id)
+            except FileNotFoundError:
+                failed = None
+            if failed is not None:
+                failed.status = "failed"
+                failed.error = str(exc)
+                failed.completed_at = _utc_now()
+                failed.lease_expires_at = None
+                self.job_repository.save(failed)
             self._record_lease_event(
                 job_id=record.job_id,
                 worker_id=self._worker_id,
@@ -694,13 +1198,17 @@ class JobService:
                 details={"error": str(exc)},
             )
         else:
-            completed = self.job_repository.get(record.job_id)
-            completed.status = "completed"
-            completed.result_payload = result_payload
-            completed.error = None
-            completed.completed_at = _utc_now()
-            completed.lease_expires_at = None
-            self.job_repository.save(completed)
+            try:
+                completed = self.job_repository.get(record.job_id)
+            except FileNotFoundError:
+                completed = None
+            if completed is not None:
+                completed.status = "completed"
+                completed.result_payload = result_payload
+                completed.error = None
+                completed.completed_at = _utc_now()
+                completed.lease_expires_at = None
+                self.job_repository.save(completed)
             self._record_lease_event(
                 job_id=record.job_id,
                 worker_id=self._worker_id,
@@ -716,6 +1224,13 @@ class JobService:
             return self._run_audit_trace(record.request_payload)
         if record.job_type == "collect-audit":
             return self._run_collect_audit(record.request_payload)
+        if record.job_type == "runtime-smoke":
+            return {
+                "status": "completed",
+                **record.request_payload,
+            }
+        if record.job_type == "control-plane-validation-noop":
+            return self._run_validation_noop(record.request_payload)
         raise ValueError(f"Unsupported job type '{record.job_type}'.")
 
     def _run_audit_trace(self, request_payload: dict) -> dict:
@@ -769,6 +1284,18 @@ class JobService:
             }
         )
         return payload
+
+    def _run_validation_noop(self, request_payload: dict) -> dict:
+        delay_seconds = float(request_payload.get("delay_seconds", 0.0) or 0.0)
+        if delay_seconds > 0:
+            sleep(delay_seconds)
+        if bool(request_payload.get("should_fail", False)):
+            raise RuntimeError(str(request_payload.get("failure_message", "intentional validation failure")))
+        return {
+            "ok": True,
+            "label": request_payload.get("label"),
+            "delay_seconds": delay_seconds,
+        }
 
     def _serialize_audit_result(self, result) -> dict:
         return {
@@ -889,14 +1416,24 @@ class JobService:
         changed_by: str,
         reason: str | None,
         details: dict,
+        actor_details: dict | None = None,
     ) -> ControlPlaneMaintenanceEventRecord:
+        event_details = dict(details)
+        actor_payload = dict(event_details.get("actor", {}))
+        if actor_details:
+            for key, value in actor_details.items():
+                if value is not None:
+                    actor_payload[str(key)] = value
+        actor_payload.setdefault("actor_id", changed_by)
+        event_details["actor"] = actor_payload
+        event_details.setdefault("recorded_via", "service")
         record = ControlPlaneMaintenanceEventRecord(
             event_id=uuid4().hex[:16],
             recorded_at=_utc_now(),
             event_type=event_type,
             changed_by=changed_by,
             reason=reason,
-            details=details,
+            details=event_details,
         )
         self.job_repository.append_control_plane_maintenance_event(record)
         return record

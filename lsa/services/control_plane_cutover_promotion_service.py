@@ -25,6 +25,9 @@ class ControlPlaneCutoverPromotionSummary:
     rehearsal_max_age_hours: float
     require_apply_rehearsal: bool
     require_runtime_validation: bool
+    require_live_workload_target_validation: bool
+    require_live_workload_proof_validation: bool
+    require_backup_validation: bool
     allow_override: bool
     override_applied: bool
     readiness: dict[str, Any]
@@ -51,6 +54,9 @@ class ControlPlaneCutoverPromotionSummary:
             "rehearsal_max_age_hours": self.rehearsal_max_age_hours,
             "require_apply_rehearsal": self.require_apply_rehearsal,
             "require_runtime_validation": self.require_runtime_validation,
+            "require_live_workload_target_validation": self.require_live_workload_target_validation,
+            "require_live_workload_proof_validation": self.require_live_workload_proof_validation,
+            "require_backup_validation": self.require_backup_validation,
             "allow_override": self.allow_override,
             "override_applied": self.override_applied,
             "readiness": dict(self.readiness),
@@ -83,7 +89,11 @@ class ControlPlaneCutoverPromotionService:
         rehearsal_max_age_hours: float = 24.0,
         require_apply_rehearsal: bool = False,
         require_runtime_validation: bool | None = None,
+        require_live_workload_target_validation: bool | None = None,
+        require_live_workload_proof_validation: bool | None = None,
+        require_backup_validation: bool | None = None,
         allow_override: bool = False,
+        actor_details: dict | None = None,
     ) -> ControlPlaneCutoverPromotionSummary:
         if requested_decision != "approve" and allow_override:
             raise ValueError("allow_override is only supported when requested_decision='approve'.")
@@ -96,6 +106,9 @@ class ControlPlaneCutoverPromotionService:
             rehearsal_max_age_hours=rehearsal_max_age_hours,
             require_apply_rehearsal=require_apply_rehearsal,
             require_runtime_validation=require_runtime_validation,
+            require_live_workload_target_validation=require_live_workload_target_validation,
+            require_live_workload_proof_validation=require_live_workload_proof_validation,
+            require_backup_validation=require_backup_validation,
         )
         blockers = list(readiness.blockers)
         warnings = list(readiness.warnings)
@@ -136,6 +149,9 @@ class ControlPlaneCutoverPromotionService:
             rehearsal_max_age_hours=rehearsal_max_age_hours,
             require_apply_rehearsal=require_apply_rehearsal,
             require_runtime_validation=readiness.require_runtime_validation,
+            require_live_workload_target_validation=readiness.require_live_workload_target_validation,
+            require_live_workload_proof_validation=readiness.require_live_workload_proof_validation,
+            require_backup_validation=readiness.require_backup_validation,
             allow_override=allow_override,
             override_applied=override_applied,
             readiness=readiness.to_dict(),
@@ -147,6 +163,7 @@ class ControlPlaneCutoverPromotionService:
             changed_by=changed_by,
             reason=reason,
             details=summary.to_event_details(),
+            actor_details=actor_details,
         )
         summary.maintenance_event = event.to_dict()
         return summary

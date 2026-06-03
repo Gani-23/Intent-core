@@ -88,6 +88,7 @@ class PostgresRuntimeShadowService:
         target_database_url: str,
         changed_by: str,
         reason: str | None = None,
+        actor_details: dict | None = None,
     ) -> PostgresRuntimeShadowSyncSummary:
         runtime_support = self.runtime_support_inspector(
             root_dir=self.settings.root_dir,

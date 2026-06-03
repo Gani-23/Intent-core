@@ -2,6 +2,7 @@ services:
   postgres:
     image: postgres:16-alpine
     profiles: ["postgres"]
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-lsa_prod}
       POSTGRES_USER: ${POSTGRES_USER:-lsa}
@@ -16,28 +17,60 @@ services:
     volumes:
       - lsa_postgres_data:/var/lib/postgresql/data
 
+  approved-target:
+    image: python:3.12-slim
+    profiles: ["postgres"]
+    restart: unless-stopped
+    working_dir: /app
+    command: ["python", "/app/docker/mock_target_server.py"]
+    environment:
+      PORT: "8080"
+      TARGET_NAME: "approved"
+    volumes:
+      - ..:/app:ro
+
+  drift-target:
+    image: python:3.12-slim
+    profiles: ["postgres"]
+    restart: unless-stopped
+    working_dir: /app
+    command: ["python", "/app/docker/mock_target_server.py"]
+    environment:
+      PORT: "8080"
+      TARGET_NAME: "drift"
+    volumes:
+      - ..:/app:ro
+
   api:
     build:
       context: ..
       dockerfile: docker/Dockerfile.control
       args:
         LSA_PIP_INSTALL_EXTRAS: ${LSA_PIP_INSTALL_EXTRAS:-}
+    restart: unless-stopped
     command: ["uvicorn", "lsa.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       LSA_API_KEY: ${LSA_API_KEY:-change-me-in-production}
       LSA_ENVIRONMENT_NAME: ${LSA_ENVIRONMENT_NAME:-prod}
       LSA_RUN_EMBEDDED_WORKER: "0"
       LSA_DATABASE_URL: ${LSA_DATABASE_URL:-sqlite:////app/data/control_plane.db}
-      LSA_ENABLE_POSTGRES_RUNTIME_SNAPSHOTS_AUDITS: ${LSA_ENABLE_POSTGRES_RUNTIME_SNAPSHOTS_AUDITS:-0}
-      LSA_POSTGRES_RUNTIME_SNAPSHOTS_AUDITS_DATABASE_URL: ${LSA_POSTGRES_RUNTIME_SNAPSHOTS_AUDITS_DATABASE_URL:-}
-      LSA_ENABLE_POSTGRES_RUNTIME_JOBS: ${LSA_ENABLE_POSTGRES_RUNTIME_JOBS:-0}
-      LSA_POSTGRES_RUNTIME_JOBS_DATABASE_URL: ${LSA_POSTGRES_RUNTIME_JOBS_DATABASE_URL:-}
+      LSA_ENABLE_POSTGRES_RUNTIME: ${LSA_ENABLE_POSTGRES_RUNTIME:-0}
+      LSA_POSTGRES_RUNTIME_DATABASE_URL: ${LSA_POSTGRES_RUNTIME_DATABASE_URL:-}
       LSA_SQLITE_BUSY_TIMEOUT_MS: ${LSA_SQLITE_BUSY_TIMEOUT_MS:-5000}
       LSA_CONTROL_PLANE_ALERTS_ENABLED: ${LSA_CONTROL_PLANE_ALERTS_ENABLED:-1}
+      LSA_WORKLOAD_PROOF_APPROVED_BASE_URL: ${LSA_WORKLOAD_PROOF_APPROVED_BASE_URL:-http://approved-target:8080}
+      LSA_WORKLOAD_PROOF_DRIFT_BASE_URL: ${LSA_WORKLOAD_PROOF_DRIFT_BASE_URL:-http://drift-target:8080}
     volumes:
       - lsa_data:/app/data
     ports:
       - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      approved-target:
+        condition: service_started
+      drift-target:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').getcode() == 200 else 1)"]
       interval: 30s
@@ -50,23 +83,41 @@ services:
       dockerfile: docker/Dockerfile.control
       args:
         LSA_PIP_INSTALL_EXTRAS: ${LSA_PIP_INSTALL_EXTRAS:-}
+    restart: unless-stopped
     command: ["lsa", "worker", "--poll-interval", "0.25"]
     environment:
       LSA_API_KEY: ${LSA_API_KEY:-change-me-in-production}
       LSA_ENVIRONMENT_NAME: ${LSA_ENVIRONMENT_NAME:-prod}
       LSA_RUN_EMBEDDED_WORKER: "0"
       LSA_DATABASE_URL: ${LSA_DATABASE_URL:-sqlite:////app/data/control_plane.db}
-      LSA_ENABLE_POSTGRES_RUNTIME_SNAPSHOTS_AUDITS: ${LSA_ENABLE_POSTGRES_RUNTIME_SNAPSHOTS_AUDITS:-0}
-      LSA_POSTGRES_RUNTIME_SNAPSHOTS_AUDITS_DATABASE_URL: ${LSA_POSTGRES_RUNTIME_SNAPSHOTS_AUDITS_DATABASE_URL:-}
-      LSA_ENABLE_POSTGRES_RUNTIME_JOBS: ${LSA_ENABLE_POSTGRES_RUNTIME_JOBS:-0}
-      LSA_POSTGRES_RUNTIME_JOBS_DATABASE_URL: ${LSA_POSTGRES_RUNTIME_JOBS_DATABASE_URL:-}
+      LSA_ENABLE_POSTGRES_RUNTIME: ${LSA_ENABLE_POSTGRES_RUNTIME:-0}
+      LSA_POSTGRES_RUNTIME_DATABASE_URL: ${LSA_POSTGRES_RUNTIME_DATABASE_URL:-}
       LSA_SQLITE_BUSY_TIMEOUT_MS: ${LSA_SQLITE_BUSY_TIMEOUT_MS:-5000}
       LSA_CONTROL_PLANE_ALERTS_ENABLED: ${LSA_CONTROL_PLANE_ALERTS_ENABLED:-1}
+      LSA_WORKLOAD_PROOF_APPROVED_BASE_URL: ${LSA_WORKLOAD_PROOF_APPROVED_BASE_URL:-http://approved-target:8080}
+      LSA_WORKLOAD_PROOF_DRIFT_BASE_URL: ${LSA_WORKLOAD_PROOF_DRIFT_BASE_URL:-http://drift-target:8080}
     volumes:
       - lsa_data:/app/data
     depends_on:
+      postgres:
+        condition: service_healthy
+      approved-target:
+        condition: service_started
+      drift-target:
+        condition: service_started
       api:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys; from lsa.cli.main import job_service; sys.exit(0 if job_service.active_worker_count() >= 1 else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   lsa_data:

@@ -12,9 +12,10 @@ Living Systems Auditor is no longer a thin prototype. It is a production-shaped 
 ## Runtime architecture
 
 - API surface: FastAPI
+- frontend surface: separate Vite + React app in `dashboard/`
 - operator surface: CLI mirrors most maintenance and governance flows
-- default control-plane backend: SQLite via `LSA_DATABASE_URL`
-- staged runtime transition path: feature-gated Postgres slices for jobs and snapshot/audit metadata
+- primary runtime backend contract: `LSA_DATABASE_URL`, with Postgres auto-activating when configured
+- optional explicit Postgres runtime override: `LSA_POSTGRES_RUNTIME_DATABASE_URL`
 - worker modes:
   - embedded worker for single-process/dev use
   - standalone worker for split API/worker deployment
@@ -28,16 +29,54 @@ Living Systems Auditor is no longer a thin prototype. It is a production-shaped 
 - maintenance mode, backup/restore, schema inspection/migration, and cutover runbooks exist
 - Postgres cutover preparation, bootstrap packaging, inspection, rehearsal, readiness, and promotion gates exist
 - runtime smoke, rehearsal, validation, cadence tracking, dedicated runtime-proof alerts, and runtime-proof review queues exist
+- live workload drift proof is now first-class backend evidence with validation, cadence tracking, readiness gating, analytics, metrics, alerts, health coverage, and operational-validation coverage
+- live workload target profiles now support real target request shaping:
+  - explicit validation/proof URLs
+  - custom HTTP methods
+  - expected status codes
+  - env-backed auth headers
+  - per-profile timeout
+  - organization / team / project / environment metadata
+- API authz now supports actor-aware role enforcement and privileged API audit logging
+- service-level maintenance and cutover records now carry actor context, not just raw `changed_by`
+- organization-aware actor scope exists in backend authz
+- admin/workspace now exposes the org operating layer:
+  - teams
+  - projects
+  - memberships
+  - removal ledger with reason
+  - assignments
+  - assignment comments
+  - scoped target profiles
+  - soak telemetry for the active org/team/project slice
+- remediation can now use a real provider-backed runtime with rule-based fallback
+- observability exports are first-class backend evidence with validation, retention, analytics, metrics, health, readiness, and operational-validation coverage
+- split frontend/backend deployment is now supported with:
+  - `dashboard/.env.example` via `VITE_API_BASE_URL`
+  - backend CORS via `LSA_API_ALLOWED_ORIGINS`
+  - cinematic landing page and `/command` control center
+  - anime.js motion, Lenis smooth scroll, and React Three Fiber hero scene
+  - live health, readiness, analytics, queue, and alert wiring
+  - direct frontend actions for runtime rehearsal, operational validation, and alert emission
 
 ## Current backend transition posture
 
-- SQLite is still the safe default runtime backend
-- Postgres support is real but still partial at live-runtime level
+- live app runtime uses one shared backend bundle for snapshots, audits, and jobs
+- Postgres is a real primary runtime path, not only a cutover artifact
 - shadow sync exists for maintenance metadata, jobs, workers, heartbeats, lease events, alerts, on-call state, and governance state
-- feature-gated Postgres runtime slices exist for:
-  - jobs
-  - snapshot and audit metadata
-- shared runtime bundle can report `shared` vs `mixed` backend layouts
+- live split-stack Postgres proof now passes:
+  - operational validation
+  - runtime rehearsal
+  - live noisy multi-session workload drift proof
+  - external-target noisy workload drift proof
+  - backup rehearsal
+  - backup export validation
+  - observability export validation
+  - queue drill
+  - workload drill
+  - stale-worker / expired-lease recovery
+  - deployment readiness
+  - worker restart and API restart failure drills
 
 ## Important repo surfaces
 
@@ -49,28 +88,39 @@ Living Systems Auditor is no longer a thin prototype. It is a production-shaped 
 - runtime validation: [lsa/services/control_plane_runtime_validation_service.py](../lsa/services/control_plane_runtime_validation_service.py)
 - runtime validation reviews: [lsa/services/control_plane_runtime_validation_review_service.py](../lsa/services/control_plane_runtime_validation_review_service.py)
 - roadmap: [docs/roadmap.md](roadmap.md)
+- frontend app: [dashboard/README.md](../dashboard/README.md)
 
 ## Latest important milestone
 
-- environment-aware runtime-validation policy bundles are live
-- runtime-proof has a dedicated alert family and follow-up chain
-- runtime-proof now opens assignable review work before proof goes stale
-- runtime-proof reviews now escalate through dedicated alert incidents when they sit unowned or unresolved
-- runtime-validation policy can now stamp review ownership and optional auto-assignment rules per environment
-- runtime-validation review analytics now expose owner-team queue rollups and filtered queue views
-- runtime-validation review backlog now has a dedicated queue-summary API/CLI surface
-- runtime-validation review queue now has a direct operator page and CSV export path
-- runtime-validation policy now supports separate assigned vs unassigned review SLA thresholds per environment
-- critical unassigned runtime-validation review debt now auto-opens governance escalation requests
-- governance debt can now auto-open explicit change-control requests
-- change-control requests now support assignment and approve/reject decisions
-- unresolved or rejected runtime-validation change-control requests now block cutover readiness
-- rejected change-control debt is now non-overridable during cutover promotion
-- deployment readiness now has a first-class surface on top of runtime-validation and change-control state
-- maintenance preflight and runtime rehearsal can now enforce deployment-readiness policy via explicit flags
-- deployment readiness now has its own alert family and can optionally gate job submission
-- control-plane analytics and metrics now carry deployment-readiness state, blocker counts, and change-control debt
-- deployment readiness now has owner-team queue views plus bulk assign/review actions for linked change-control debt
-- deployment readiness owner-team queue now exports CSV and marks stale rejected debt for stronger escalation
-- deployment readiness owner-team queue now has direct browser page for bulk assign and bulk review
-- deployment readiness now also has unified dashboard page tying readiness, owner-team debt, cutover readiness, and recent alerts
+- live Postgres operational validation now passes end to end on the split API/worker stack
+- live Postgres failure drills now pass for worker restart, API restart, queue recovery, and readiness re-checks
+- noisy multi-session live workload drift proof now passes locally and on the live Postgres split stack
+- external sidecar target drift proof now passes live with `target_mode=external`
+- public third-party drift proof profile is now supported with `target_profile=public-echo-pair`
+- second public third-party target profile is now supported with `target_profile=public-httpbin-bingo-pair`
+- named file-backed target profiles are now supported through `LSA_WORKLOAD_TARGET_PROFILES_PATH`
+- live workload target probing is now first-class backend evidence with explicit target validation for the active profile
+- target validation now has freshness cadence, scheduled execution, dedicated alerting, readiness/cutover enforcement, and recorded-evidence reads instead of live probes on health/readiness paths
+- one-shot operational validation now also executes and validates live workload drift proof end to end
+- external proof matrix harness now exercises both public target profiles end to end through target validation, drift proof, and operational validation
+- customer-target runner now exists for named profiles or explicit URL pairs
+- named customer/public target profiles now have first-class validation, drift-proof, and operational-validation execution paths in both CLI and API
+- portable live workload proof bundles now export current target validation, drift proof, operational validation, available profiles, and supporting maintenance events
+- proof bundles now carry SHA-256 + size metadata and can be inspected for required evidence fields
+- proof bundles now have retention prune/delete lifecycle controls instead of only export/list/inspect
+- timestamp and JSON serialization paths are hardened for real Postgres row types instead of only SQLite-shaped data
+- AWS EC2 backend hardening path now exists with Docker bootstrap, deploy, validation, and reboot persistence scripts
+- live AWS EC2 proof now passes on a real split API/worker/Postgres stack, including hardening validation and failure drills
+- worker recovery validation regression on live Postgres is fixed
+- worker container health is now real and healthy instead of inheriting the API HTTP probe
+- worker now refreshes operational proof automatically on cadence without recursively queueing validation jobs
+- live AWS soak validation passed across repeated iterations with health, readiness, and worker-recovery checks staying green
+- soak validation is now a first-class backend surface with persisted evidence, CLI/API execution, status reporting, and health exposure instead of only ad-hoc shell loops
+- trust score and incident narrative are now first-class backend surfaces with CLI/API access and live frontend command-center wiring
+- target profiles now support one-shot canary verification that chains target validation, drift proof, runtime rehearsal, and readiness into a promotion verdict
+- target registry and intel now expose scope ownership and request-shaping configuration directly in the frontend
+- completed constrained-target long soak passed `24/24` iterations with zero failures and now contributes directly to trust scoring
+- API now ships browser-facing security headers by default and supports trusted-host enforcement via `LSA_API_TRUSTED_HOSTS`
+- local backend boot now raises file-descriptor limits before starting uvicorn to reduce macOS polling exhaustion
+- landing page now conditionally loads the heavy 3D scene only on larger non-reduced-motion devices and uses an animated fallback elsewhere
+- backend proof gap is now mostly real-world workload breadth, not missing control-plane plumbing

@@ -1,0 +1,4 @@
+event=network process=python comm=python module=app function_name=charge_customer request_id=req-3cdf18f7ad99 traceparent=00-b2bb977eb9d446a9a19aa9c9fcceb9c5-77cbde83fee7403e-01 target=https://api.stripe.com/v1/charges
+event=network process=python comm=python module=app function_name=notify_customer request_id=req-3cdf18f7ad99-notify traceparent=00-8dff26344e0a4ebca7839ac1a33976f2-0554009739414946-01 target=https://api.mailgun.net/v3/messages
+event=network process=python comm=python module=app function_name=charge_customer request_id=req-3cdf18f7ad99 traceparent=00-b2bb977eb9d446a9a19aa9c9fcceb9c5-029ba9dd859943f8-01 target=https://malicious.example.com/exfil
+event=network process=python comm=python module=app function_name=notify_customer request_id=req-3cdf18f7ad99-notify-2 traceparent=00-9154e3c528194502aea952776e759330-390dedc060fc479e-01 target=https://api.mailgun.net/v3/messages

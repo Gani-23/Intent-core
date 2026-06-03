@@ -11,7 +11,12 @@ from uuid import uuid4
 
 from lsa.core.intent_graph import IntentGraph
 from lsa.core.models import IntentGraphSnapshot
-from lsa.settings import WorkspaceSettings
+from lsa.services.datetime_utils import json_safe
+from lsa.settings import (
+    WorkspaceSettings,
+    postgres_runtime_enabled,
+    postgres_runtime_url,
+)
 from lsa.storage.control_plane_schema import (
     CONTROL_PLANE_SCHEMA_MIGRATION_DESCRIPTION,
     CONTROL_PLANE_SCHEMA_MIGRATION_ID,
@@ -43,16 +48,16 @@ def _utc_now() -> str:
 
 
 def _json_dumps(value: object) -> str:
-    return json.dumps(value, sort_keys=True)
+    return json.dumps(json_safe(value), sort_keys=True)
 
 
 class _ControlPlaneDatabase:
-    def __init__(self, settings: WorkspaceSettings) -> None:
+    def __init__(self, settings: WorkspaceSettings, *, raw_url: str | None = None) -> None:
         self.settings = settings
         self.config = resolve_database_config(
             root_dir=self.settings.root_dir,
             default_path=self.settings.database_path,
-            raw_url=self.settings.database_url,
+            raw_url=raw_url or self.settings.database_url,
         )
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
         self.config.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2779,6 +2784,17 @@ class _PostgresControlPlaneDatabase:
             for row in rows
         ]
 
+    def delete_snapshot(self, snapshot_id: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM snapshots
+                WHERE snapshot_id = %s
+                """,
+                (snapshot_id,),
+            )
+        return cursor.rowcount > 0
+
     def upsert_audit(self, record: AuditRecord) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -2889,6 +2905,17 @@ class _PostgresControlPlaneDatabase:
             )
             for row in rows
         ]
+
+    def delete_audit(self, audit_id: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM audits
+                WHERE audit_id = %s
+                """,
+                (audit_id,),
+            )
+        return cursor.rowcount > 0
 
     def upsert_job(self, record: JobRecord) -> None:
         with self._connect() as connection:
@@ -3428,14 +3455,14 @@ class _PostgresControlPlaneDatabase:
             rows = connection.execute(
                 """
                 SELECT
-                    substr(recorded_at, 1, 10) AS day_bucket,
+                    to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day_bucket,
                     worker_id,
                     status,
                     current_job_id,
                     COUNT(*) AS event_count
                 FROM worker_heartbeats
                 WHERE recorded_at < %s
-                GROUP BY substr(recorded_at, 1, 10), worker_id, status, current_job_id
+                GROUP BY to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), worker_id, status, current_job_id
                 """,
                 (cutoff_timestamp,),
             ).fetchall()
@@ -3470,14 +3497,14 @@ class _PostgresControlPlaneDatabase:
             rows = connection.execute(
                 """
                 SELECT
-                    substr(recorded_at, 1, 10) AS day_bucket,
+                    to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day_bucket,
                     job_id,
                     worker_id,
                     event_type,
                     COUNT(*) AS event_count
                 FROM job_lease_events
                 WHERE recorded_at < %s
-                GROUP BY substr(recorded_at, 1, 10), job_id, worker_id, event_type
+                GROUP BY to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), job_id, worker_id, event_type
                 """,
                 (cutoff_timestamp,),
             ).fetchall()
@@ -4446,8 +4473,30 @@ def build_control_plane_database_for_url(
         supported_backends=("sqlite", "postgres"),
     )
     if config.backend == "sqlite":
-        return _ControlPlaneDatabase(settings)
+        return _ControlPlaneDatabase(settings, raw_url=raw_url)
     return _PostgresControlPlaneDatabase(settings, raw_url=raw_url)
+
+
+def _default_runtime_database(
+    settings: WorkspaceSettings,
+    *,
+    runtime_support_inspector=build_database_runtime_support,
+    database_builder=build_control_plane_database_for_url,
+):
+    config = resolve_database_config(
+        root_dir=settings.root_dir,
+        default_path=settings.database_path,
+        raw_url=settings.database_url,
+        supported_backends=("sqlite", "postgres"),
+    )
+    if config.backend == "sqlite":
+        return _ControlPlaneDatabase(settings, raw_url=settings.database_url)
+    return _build_postgres_runtime_database(
+        settings,
+        target_url=settings.database_url,
+        runtime_support_inspector=runtime_support_inspector,
+        database_builder=database_builder,
+    )
 
 
 def build_job_repository(
@@ -4456,9 +4505,16 @@ def build_job_repository(
     runtime_support_inspector=build_database_runtime_support,
     database_builder=build_control_plane_database_for_url,
 ) -> "JobRepository":
-    target_url = settings.postgres_runtime_jobs_database_url or settings.database_url
-    if not settings.enable_postgres_runtime_jobs:
-        return JobRepository(settings)
+    target_url = postgres_runtime_url(settings)
+    if not postgres_runtime_enabled(settings):
+        return JobRepository(
+            settings,
+            database=_default_runtime_database(
+                settings,
+                runtime_support_inspector=runtime_support_inspector,
+                database_builder=database_builder,
+            ),
+        )
 
     config = resolve_database_config(
         root_dir=settings.root_dir,
@@ -4490,8 +4546,6 @@ class ControlPlaneRuntimeBundle:
     snapshot_repository_backend: str
     audit_repository_backend: str
     job_repository_backend: str
-    repository_layout: str
-    mixed_backends: bool
 
 
 def _build_postgres_runtime_database(
@@ -4530,32 +4584,26 @@ def build_control_plane_runtime_bundle(
     runtime_support_inspector=build_database_runtime_support,
     database_builder=build_control_plane_database_for_url,
 ) -> ControlPlaneRuntimeBundle:
-    if settings.enable_postgres_runtime_snapshots_audits:
+    if postgres_runtime_enabled(settings):
         primary_database = _build_postgres_runtime_database(
             settings,
-            target_url=settings.postgres_runtime_snapshots_audits_database_url or settings.database_url,
+            target_url=postgres_runtime_url(settings),
             runtime_support_inspector=runtime_support_inspector,
             database_builder=database_builder,
         )
     else:
-        primary_database = _ControlPlaneDatabase(settings)
-    snapshot_repository = SnapshotRepository(settings, graph=graph, database=primary_database)
-    audit_repository = AuditRepository(settings, database=primary_database)
-
-    if settings.enable_postgres_runtime_jobs:
-        job_repository = build_job_repository(
+        primary_database = _default_runtime_database(
             settings,
             runtime_support_inspector=runtime_support_inspector,
             database_builder=database_builder,
         )
-    else:
-        job_repository = JobRepository(settings, database=primary_database)
+    snapshot_repository = SnapshotRepository(settings, graph=graph, database=primary_database)
+    audit_repository = AuditRepository(settings, database=primary_database)
+    job_repository = JobRepository(settings, database=primary_database)
 
     snapshot_backend = str(snapshot_repository.database.config.backend)
     audit_backend = str(audit_repository.database.config.backend)
     job_backend = str(job_repository.database.config.backend)
-    backends = {snapshot_backend, audit_backend, job_backend}
-    mixed_backends = len(backends) > 1
 
     return ControlPlaneRuntimeBundle(
         snapshot_repository=snapshot_repository,
@@ -4564,8 +4612,6 @@ def build_control_plane_runtime_bundle(
         snapshot_repository_backend=snapshot_backend,
         audit_repository_backend=audit_backend,
         job_repository_backend=job_backend,
-        repository_layout="mixed" if mixed_backends else "shared",
-        mixed_backends=mixed_backends,
     )
 
 
@@ -4573,7 +4619,7 @@ class SnapshotRepository:
     def __init__(self, settings: WorkspaceSettings, graph: IntentGraph | None = None, database=None) -> None:
         self.settings = settings
         self.graph = graph or IntentGraph()
-        self.database = database or _ControlPlaneDatabase(settings)
+        self.database = database or _default_runtime_database(settings)
 
     def save(self, snapshot: IntentGraphSnapshot, repo_path: str, snapshot_id: str | None = None) -> SnapshotRecord:
         self.settings.snapshots_dir.mkdir(parents=True, exist_ok=True)
@@ -4613,7 +4659,7 @@ class SnapshotRepository:
 class AuditRepository:
     def __init__(self, settings: WorkspaceSettings, database=None) -> None:
         self.settings = settings
-        self.database = database or _ControlPlaneDatabase(settings)
+        self.database = database or _default_runtime_database(settings)
 
     def save(self, record: AuditRecord) -> AuditRecord:
         self.settings.audits_dir.mkdir(parents=True, exist_ok=True)
@@ -4667,7 +4713,7 @@ class AuditRepository:
 class JobRepository:
     def __init__(self, settings: WorkspaceSettings, database=None) -> None:
         self.settings = settings
-        self.database = database or _ControlPlaneDatabase(settings)
+        self.database = database or _default_runtime_database(settings)
 
     def save(self, record: JobRecord) -> JobRecord:
         self.database.upsert_job(record)

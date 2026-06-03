@@ -170,6 +170,7 @@ class ControlPlaneCutoverService:
         reason: str | None = None,
         allow_running_jobs: bool = False,
         disable_maintenance_on_success: bool = True,
+        actor_details: dict | None = None,
     ) -> ControlPlaneCutoverBundleSummary:
         preflight = self.build_preflight(target_database_url=target_database_url)
         effective_blockers = [
@@ -191,6 +192,7 @@ class ControlPlaneCutoverService:
             reason=reason or f"database cutover bundle for {preflight.target.redacted_url}",
             allow_running_jobs=allow_running_jobs,
             disable_maintenance_on_success=disable_maintenance_on_success,
+            actor_details=actor_details,
         )
         postgres_bootstrap_package = None
         recommended_restore_order = [
@@ -229,5 +231,6 @@ class ControlPlaneCutoverService:
             changed_by=changed_by,
             reason=reason,
             details=summary.to_dict(),
+            actor_details=actor_details,
         )
         return summary

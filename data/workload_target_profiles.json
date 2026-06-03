@@ -1,0 +1,48 @@
+{
+  "profiles": [
+    {
+      "name": "barre",
+      "approved_target_base_url": "https://br-icloud.com.br",
+      "drift_target_base_url": "https://br-icloud.com.br",
+      "approved_probe_url": "https://br-icloud.com.br",
+      "drift_probe_url": "https://br-icloud.com.br",
+      "approved_action_url": null,
+      "drift_action_url": null,
+      "enabled": true,
+      "description": "Malacious target "
+    },
+    {
+      "name": "docker-constrained-express-pair",
+      "approved_target_base_url": "http://127.0.0.1:4021",
+      "drift_target_base_url": "http://127.0.0.1:4022",
+      "approved_probe_url": "http://127.0.0.1:4021/probe/approved",
+      "drift_probe_url": "http://127.0.0.1:4022/probe/drift",
+      "approved_action_url": "http://127.0.0.1:4021/v1/charges",
+      "drift_action_url": "http://127.0.0.1:4022/exfil",
+      "enabled": true,
+      "description": "Docker-constrained local Express target pair with limited CPU/memory for endurance testing."
+    },
+    {
+      "name": "github-status-pair",
+      "approved_target_base_url": "https://www.githubstatus.com",
+      "drift_target_base_url": "https://www.githubstatus.com",
+      "approved_probe_url": "https://www.githubstatus.com/api/v2/status.json",
+      "drift_probe_url": "https://www.githubstatus.com/api/v2/summary.json",
+      "approved_action_url": "https://www.githubstatus.com/api/v2/status.json",
+      "drift_action_url": "https://www.githubstatus.com/api/v2/summary.json",
+      "enabled": true,
+      "description": "GitHub Status public API pair for manual target validation and drift-proof testing"
+    },
+    {
+      "name": "littardo emporium",
+      "approved_target_base_url": "https://api.littardo.com/api/products",
+      "drift_target_base_url": "https://dev-api.littardo.com/api/products",
+      "approved_probe_url": "https://api.littardo.com/",
+      "drift_probe_url": "https://dev-api.littardo.com/",
+      "approved_action_url": null,
+      "drift_action_url": null,
+      "enabled": true,
+      "description": "Test the api of littardo "
+    }
+  ]
+}

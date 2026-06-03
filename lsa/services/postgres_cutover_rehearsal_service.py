@@ -87,6 +87,7 @@ class PostgresCutoverRehearsalService:
         psql_executable: str = "psql",
         artifact_target_root: str | None = None,
         apply_to_target: bool = False,
+        actor_details: dict | None = None,
     ) -> PostgresCutoverRehearsalSummary:
         started_at = _utc_now()
         steps: list[str] = []
@@ -123,7 +124,7 @@ class PostgresCutoverRehearsalService:
                 package_inspection=package_inspection.to_dict(),
                 target_before=target_before.to_dict(),
             )
-            self._record(changed_by=changed_by, reason=reason, summary=summary)
+            self._record(changed_by=changed_by, reason=reason, summary=summary, actor_details=actor_details)
             return summary
 
         execution_result = self.bootstrap_service.execute_package(
@@ -176,7 +177,7 @@ class PostgresCutoverRehearsalService:
             target_after=None if target_after is None else target_after.to_dict(),
             verification=None if verification is None else verification.to_dict(),
         )
-        self._record(changed_by=changed_by, reason=reason, summary=summary)
+        self._record(changed_by=changed_by, reason=reason, summary=summary, actor_details=actor_details)
         return summary
 
     def _record(
@@ -185,10 +186,12 @@ class PostgresCutoverRehearsalService:
         changed_by: str,
         reason: str | None,
         summary: PostgresCutoverRehearsalSummary,
+        actor_details: dict | None = None,
     ) -> None:
         self.job_service.record_maintenance_event(
             event_type="postgres_cutover_rehearsed",
             changed_by=changed_by,
             reason=reason,
             details=summary.to_dict(),
+            actor_details=actor_details,
         )

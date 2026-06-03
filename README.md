@@ -73,12 +73,9 @@ export LSA_DATABASE_URL=sqlite:///$PWD/data/control_plane.db
 export LSA_SQLITE_BUSY_TIMEOUT_MS=5000
 # Optional when preparing a future Postgres runtime path:
 # pip install -e ".[postgres]"
-# Optional when explicitly activating the Postgres-backed snapshot/audit metadata path:
-# export LSA_ENABLE_POSTGRES_RUNTIME_SNAPSHOTS_AUDITS=1
-# export LSA_POSTGRES_RUNTIME_SNAPSHOTS_AUDITS_DATABASE_URL=postgresql://lsa:secret@db.example.com:5432/lsa_prod
-# Optional when explicitly activating the Postgres-backed job repository path:
-# export LSA_ENABLE_POSTGRES_RUNTIME_JOBS=1
-# export LSA_POSTGRES_RUNTIME_JOBS_DATABASE_URL=postgresql://lsa:secret@db.example.com:5432/lsa_prod
+# Optional when explicitly activating the unified Postgres runtime path:
+# export LSA_ENABLE_POSTGRES_RUNTIME=1
+# export LSA_POSTGRES_RUNTIME_DATABASE_URL=postgresql://lsa:secret@db.example.com:5432/lsa_prod
 # Optional for single-process dev mode only:
 export LSA_RUN_EMBEDDED_WORKER=1
 # Optional environment-aware runtime-proof policy bundle:
@@ -252,19 +249,17 @@ There is now also an explicit runtime-backend activation probe. `lsa control-pla
 
 There is now also a first shadow-sync bridge for the future runtime store. `lsa sync-postgres-runtime-shadow` and `POST /maintenance/postgres-runtime-shadow-sync` take the current control-plane maintenance and queue slice from the active runtime store and copy it into a Postgres target using the shared schema contract. That slice now covers maintenance-mode metadata, append-only maintenance events, jobs, workers, worker heartbeats, and job lease events, which gives us a real Postgres-backed control-plane foothold before moving the wider alert and on-call surfaces.
 
-The snapshot and audit metadata path is now also explicitly feature-gated. If `LSA_ENABLE_POSTGRES_RUNTIME_SNAPSHOTS_AUDITS=1` is set, the runtime bundle will try to place snapshot and audit records on `LSA_POSTGRES_RUNTIME_SNAPSHOTS_AUDITS_DATABASE_URL` (or fall back to `LSA_DATABASE_URL` if that override is unset). Activation uses the same runtime-availability checks as the job path, so a missing driver or unsupported backend still fails loudly instead of drifting into a half-activated state.
+The Postgres runtime path is now primarily governed by one contract: `LSA_ENABLE_POSTGRES_RUNTIME=1` plus `LSA_POSTGRES_RUNTIME_DATABASE_URL` or `LSA_DATABASE_URL`. When activated, the runtime bundle moves snapshots, audits, and jobs through one shared Postgres-backed control-plane path instead of requiring separate feature flags for each repository slice. Activation is not silent: the runtime backend still has to pass the same availability checks, including the required driver dependency. When activated, the Postgres-backed runtime slice supports snapshot metadata persistence, audit metadata persistence, live queue claim, stale-lease requeue, lease renewal, worker-visibility counts, control-plane alert persistence and acknowledgement, alert silences, on-call schedule persistence, and governed on-call change-request persistence, while SQLite remains the safe default when unified Postgres runtime is not enabled.
 
-On top of that, the job repository bootstrap path is now explicitly feature-gated. If `LSA_ENABLE_POSTGRES_RUNTIME_JOBS=1` is set, the app will try to activate the job repository against `LSA_POSTGRES_RUNTIME_JOBS_DATABASE_URL` (or fall back to `LSA_DATABASE_URL` if that override is unset). Activation is not silent: the runtime backend still has to pass the same availability checks, including the required driver dependency. When activated, the Postgres-backed runtime slice now supports snapshot metadata persistence, audit metadata persistence, live queue claim, stale-lease requeue, lease renewal, worker-visibility counts, control-plane alert persistence and acknowledgement, alert silences, on-call schedule persistence, and governed on-call change-request persistence, while SQLite remains the safe default for the full control plane.
+The API and CLI now bootstrap those repositories through one shared control-plane runtime bundle instead of constructing snapshots, audits, and jobs independently. `/health` reports the snapshot, audit, and job repository backends directly so operators can see the live backend posture without inferring it from separate repository wiring.
 
-The API and CLI now bootstrap those repositories through one control-plane runtime bundle instead of constructing snapshots, audits, and jobs independently. That bundle exposes whether the current process is on a `shared` backend layout or a `mixed` transition layout. `/health` now reports `snapshot_repository_backend`, `audit_repository_backend`, `job_repository_backend`, `control_plane_repository_layout`, and `control_plane_mixed_backends`, so operators can see when the system is intentionally straddling SQLite and Postgres during a staged backend transition, or when all three repository surfaces have moved together onto one backend.
-
-`/health` now also exposes explicit activation state for both staged Postgres runtime slices: `snapshots_audits_repository_runtime_enabled`, `snapshots_audits_repository_runtime_active`, `job_repository_runtime_enabled`, and `job_repository_runtime_active`. That makes it obvious whether the feature flags are only configured or whether the live repositories have actually crossed onto the intended backend.
+`/health` now also exposes unified Postgres runtime state through `postgres_runtime_enabled` and `postgres_runtime_active`. That makes it obvious whether the runtime is configured for Postgres at all and whether the live repositories are actually running there.
 
 There is now also a cleanup-safe runtime smoke path for that bundle. `lsa run-control-plane-runtime-smoke` and `POST /maintenance/control-plane-runtime-smoke` create a synthetic snapshot, audit, and job through the live repositories, verify that each one round-trips, record a maintenance event, and then remove the records and generated artifacts by default. That gives operators a direct “does this backend actually work for the control-plane surfaces we enabled?” probe without leaving junk state behind.
 
-On top of that, there is now a first-class runtime rehearsal path. `lsa run-control-plane-runtime-rehearsal` and `POST /maintenance/control-plane-runtime-rehearsal` combine explicit backend/layout expectations with the live smoke flow and persist an audited maintenance event stating whether the current runtime actually matches the intended deployment posture. This is the structured path for assertions like “all three repository surfaces are really on Postgres in a shared layout right now,” instead of forcing operators to compare individual health fields by hand.
+On top of that, there is now a first-class runtime rehearsal path. `lsa run-control-plane-runtime-rehearsal` and `POST /maintenance/control-plane-runtime-rehearsal` combine explicit backend expectations with the live smoke flow and persist an audited maintenance event stating whether the current runtime actually matches the intended deployment posture.
 
-That rehearsal evidence is now surfaced directly too. `lsa control-plane-runtime-validation` and `GET /maintenance/control-plane-runtime-validation` report whether the latest runtime rehearsal is missing, failed, aging, critical, or healthy for the active environment, including the latest rehearsal age, expected backend/layout, and recorded check results.
+That rehearsal evidence is now surfaced directly too. `lsa control-plane-runtime-validation` and `GET /maintenance/control-plane-runtime-validation` report whether the latest runtime rehearsal is missing, failed, aging, critical, or healthy for the active environment, including the latest rehearsal age, expected backend, and recorded check results.
 
 That validation surface now also carries an explicit cadence state. Runtime proof can be `fresh`, `due_soon`, `aging`, `overdue`, `missing`, or `failed`, with `next_due_at` and `due_in_hours` surfaced for operators. That gives the alert loop a chance to warn before proof crosses the main warning/critical age gates.
 
@@ -394,6 +389,35 @@ There is now also a first-class control-plane maintenance switch. `lsa control-p
 On top of that switch, the control plane now has a guarded maintenance workflow. `lsa control-plane-preflight` and `GET /maintenance/control-plane-preflight` surface the operator checks that matter before risky work starts: database readiness and writability, schema drift, current maintenance state, worker mode, active workers, and live queue counts, plus explicit blockers and warnings. `lsa run-control-plane-maintenance-workflow` and `POST /maintenance/control-plane-runbook` then sequence preflight, maintenance-mode enablement, versioned backup export, schema repair, and optional maintenance-mode disablement into one audited runbook path instead of relying on manual operator ordering.
 
 There is now also an explicit database cutover bridge for moving beyond the current SQLite runtime safely. `lsa control-plane-cutover-preflight` and `GET /maintenance/control-plane-cutover-preflight` validate a target database URL such as `postgresql://...`, redact credentials for operator-safe output, and combine that target validation with the source maintenance preflight. `lsa prepare-control-plane-cutover-bundle` and `POST /maintenance/control-plane-cutover-bundle` then run the guarded maintenance workflow, export a versioned control-plane backup bundle, and write a cutover manifest that captures source metadata, target database details, the maintenance workflow result, and a recommended restore order for the target system. This does not pretend the runtime already executes on Postgres, but it gives production operators a real audited bridge artifact for the eventual cutover.
+
+Live workload target validation is also now part of the production contract: it is recorded as evidence instead of being probed on read paths, has freshness cadence and automatic worker execution, emits dedicated alerts, participates in analytics and metrics, and can block deployment or cutover readiness when the active external target profile is stale or failing.
+
+For public third-party proof runs, the repo now supports both `public-echo-pair` and `public-httpbin-bingo-pair`, and `scripts/run_external_workload_proof_matrix.sh` exercises target validation, drift proof, and one-shot operational validation across both profiles.
+
+For customer-like environments, named external target profiles can be loaded from `LSA_WORKLOAD_TARGET_PROFILES_PATH`, listed with `lsa list-live-workload-target-profiles`, and exercised directly through:
+
+- `lsa run-live-workload-target-profile-validation --profile ...`
+- `lsa run-live-workload-target-profile-drift-proof --profile ...`
+- `lsa run-live-workload-target-profile-operational-validation --profile ...`
+
+The same named-profile execution path is also exposed through the API with:
+
+- `POST /maintenance/live-workload-target-profiles/{profile_name}/validate`
+- `POST /maintenance/live-workload-target-profiles/{profile_name}/drift-proof`
+- `POST /maintenance/live-workload-target-profiles/{profile_name}/operational-validation`
+
+There is also still an end-to-end runner at `scripts/run_customer_target_workload_proof.sh`.
+
+Portable proof handoff is now available too: `lsa export-live-workload-proof-bundle` writes a JSON bundle with the latest target validation, live drift proof validation, operational validation evidence, available target profiles, and supporting maintenance events.
+`lsa inspect-live-workload-proof-bundle --path ...` verifies the exported bundle shape and reports its SHA-256, size, target profile, and linked evidence ids.
+Proof bundles now also have explicit lifecycle controls through `lsa prune-live-workload-proof-bundles`, `lsa delete-live-workload-proof-bundle`, `POST /maintenance/live-workload-proof-bundles/prune`, and `POST /maintenance/live-workload-proof-bundles/delete`.
+
+For real infra hardening without a domain, there is now an EC2 path in `deploy/aws/README.md` with:
+
+- Docker bootstrap for Ubuntu
+- Postgres-backed compose deployment
+- reboot persistence via systemd
+- one-shot backend hardening validation
 
 For Postgres targets, that cutover bundle now also emits a concrete bootstrap package next to the manifest. The package contains:
 

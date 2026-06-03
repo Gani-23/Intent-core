@@ -1,0 +1,29 @@
+services:
+  constrained-express-target-pair:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.targets
+    container_name: lsa-constrained-express-target-pair
+    ports:
+      - "4021:4011"
+      - "4022:4012"
+    mem_limit: 128m
+    cpus: 0.50
+    pids_limit: 64
+    restart: unless-stopped
+    tmpfs:
+      - /tmp:size=16m
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- --method=POST --header='Content-Type: application/json' --body-data='{}' http://127.0.0.1:4011/probe/approved >/dev/null && wget -qO- --method=POST --header='Content-Type: application/json' --body-data='{}' http://127.0.0.1:4012/probe/drift >/dev/null",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      options:
+        max-size: "5m"
+        max-file: "3"

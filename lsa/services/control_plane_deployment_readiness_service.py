@@ -4,6 +4,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from lsa.services.control_plane_backup_operations_service import ControlPlaneBackupOperationsService
+from lsa.services.control_plane_backup_validation_service import ControlPlaneBackupValidationService
+from lsa.services.control_plane_live_workload_proof_validation_service import (
+    ControlPlaneLiveWorkloadProofValidationService,
+)
+from lsa.services.control_plane_live_workload_target_validation_service import (
+    ControlPlaneLiveWorkloadTargetValidationService,
+)
+from lsa.services.control_plane_observability_export_service import ControlPlaneObservabilityExportService
 from lsa.services.control_plane_runtime_validation_review_service import ControlPlaneRuntimeValidationReviewService
 from lsa.services.control_plane_runtime_validation_service import ControlPlaneRuntimeValidationService
 from lsa.services.runtime_validation_policy import RuntimeValidationPolicy, load_runtime_validation_policy_bundle
@@ -40,6 +49,11 @@ class ControlPlaneDeploymentReadinessSummary:
     evaluated_at: str
     environment_name: str
     runtime_validation: dict[str, Any]
+    live_workload_target_validation: dict[str, Any]
+    live_workload_proof_validation: dict[str, Any]
+    backup_validation: dict[str, Any]
+    backup_export_validation: dict[str, Any]
+    observability_export_validation: dict[str, Any]
     runtime_validation_change_control_requests: list[dict[str, Any]] = field(default_factory=list)
     owner_team_rollups: list[ControlPlaneDeploymentReadinessOwnerTeamRollup] = field(default_factory=list)
     oldest_rejected_age_hours: float | None = None
@@ -55,6 +69,11 @@ class ControlPlaneDeploymentReadinessSummary:
             "evaluated_at": self.evaluated_at,
             "environment_name": self.environment_name,
             "runtime_validation": dict(self.runtime_validation),
+            "live_workload_target_validation": dict(self.live_workload_target_validation),
+            "live_workload_proof_validation": dict(self.live_workload_proof_validation),
+            "backup_validation": dict(self.backup_validation),
+            "backup_export_validation": dict(self.backup_export_validation),
+            "observability_export_validation": dict(self.observability_export_validation),
             "runtime_validation_change_control_requests": [
                 dict(item) for item in self.runtime_validation_change_control_requests
             ],
@@ -96,6 +115,39 @@ class ControlPlaneDeploymentReadinessService:
             or self.settings.analytics_runtime_rehearsal_critical_age_hours,
             policy_source=runtime_policy_bundle.source_for(environment_name=self.settings.environment_name),
         ).build_summary()
+        live_workload_target_validation = ControlPlaneLiveWorkloadTargetValidationService(
+            settings=self.settings,
+            job_repository=self.job_repository,
+            job_service=self.job_service,
+            live_workload_drift_proof_service=None,
+        ).build_summary()
+        live_workload_proof_validation = ControlPlaneLiveWorkloadProofValidationService(
+            job_repository=self.job_repository,
+            environment_name=self.settings.environment_name,
+            due_soon_age_hours=self.settings.analytics_live_workload_proof_due_soon_age_hours,
+            warning_age_hours=self.settings.analytics_live_workload_proof_warning_age_hours,
+            critical_age_hours=self.settings.analytics_live_workload_proof_critical_age_hours,
+        ).build_summary()
+        backup_validation = ControlPlaneBackupValidationService(
+            job_repository=self.job_repository,
+            environment_name=self.settings.environment_name,
+            due_soon_age_hours=self.settings.analytics_backup_rehearsal_due_soon_age_hours,
+            warning_age_hours=self.settings.analytics_backup_rehearsal_warning_age_hours,
+            critical_age_hours=self.settings.analytics_backup_rehearsal_critical_age_hours,
+        ).build_summary()
+        backup_export_validation = ControlPlaneBackupOperationsService(
+            settings=self.settings,
+            backup_service=None,
+            job_repository=self.job_repository,
+            job_service=self.job_service,
+        ).latest_backup_export_validation()
+        observability_export_validation = ControlPlaneObservabilityExportService(
+            settings=self.settings,
+            job_service=self.job_service,
+            analytics_service=None,
+            metrics_service=None,
+            privileged_api_audit_service=None,
+        ).latest_export_validation()
         review_service = ControlPlaneRuntimeValidationReviewService(
             settings=self.settings,
             job_service=self.job_service,
@@ -151,6 +203,16 @@ class ControlPlaneDeploymentReadinessService:
         warnings: list[str] = []
         if runtime_validation.status != "passed":
             blockers.append(f"runtime_validation_{runtime_validation.status}")
+        if live_workload_target_validation.status != "passed":
+            blockers.append(f"live_workload_target_validation_{live_workload_target_validation.status}")
+        if live_workload_proof_validation.status != "passed":
+            blockers.append(f"live_workload_proof_validation_{live_workload_proof_validation.status}")
+        if backup_validation.status != "passed":
+            blockers.append(f"backup_validation_{backup_validation.status}")
+        if backup_export_validation.status != "passed":
+            blockers.append(f"backup_export_validation_{backup_export_validation.status}")
+        if observability_export_validation.status != "passed":
+            blockers.append(f"observability_export_validation_{observability_export_validation.status}")
         if any(item["status"] == "pending_review" for item in change_control_requests):
             blockers.append("runtime_validation_change_control_pending")
         if any(item["status"] == "rejected" for item in change_control_requests):
@@ -166,6 +228,11 @@ class ControlPlaneDeploymentReadinessService:
             evaluated_at=_utc_now(),
             environment_name=self.settings.environment_name,
             runtime_validation=runtime_validation.to_dict(),
+            live_workload_target_validation=live_workload_target_validation.to_dict(),
+            live_workload_proof_validation=live_workload_proof_validation.to_dict(),
+            backup_validation=backup_validation.to_dict(),
+            backup_export_validation=backup_export_validation.to_dict(),
+            observability_export_validation=observability_export_validation.to_dict(),
             runtime_validation_change_control_requests=change_control_requests,
             owner_team_rollups=[
                 ControlPlaneDeploymentReadinessOwnerTeamRollup(

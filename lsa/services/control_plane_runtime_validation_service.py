@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from lsa.services.datetime_utils import parse_datetime_value
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
@@ -28,10 +30,7 @@ class ControlPlaneRuntimeValidationSummary:
     latest_rehearsal_reason: str | None = None
     latest_rehearsal_status: str | None = None
     latest_expected_backend: str | None = None
-    latest_expected_repository_layout: str | None = None
     latest_database_backend: str | None = None
-    latest_repository_layout: str | None = None
-    latest_mixed_backends: bool | None = None
     latest_checks: dict[str, bool] | None = None
     age_hours: float | None = None
     next_due_at: str | None = None
@@ -57,10 +56,7 @@ class ControlPlaneRuntimeValidationSummary:
             "latest_rehearsal_reason": self.latest_rehearsal_reason,
             "latest_rehearsal_status": self.latest_rehearsal_status,
             "latest_expected_backend": self.latest_expected_backend,
-            "latest_expected_repository_layout": self.latest_expected_repository_layout,
             "latest_database_backend": self.latest_database_backend,
-            "latest_repository_layout": self.latest_repository_layout,
-            "latest_mixed_backends": self.latest_mixed_backends,
             "latest_checks": {} if self.latest_checks is None else dict(self.latest_checks),
             "age_hours": self.age_hours,
             "next_due_at": self.next_due_at,
@@ -101,7 +97,7 @@ class ControlPlaneRuntimeValidationService:
             )
 
         details = dict(latest_event.details)
-        recorded_at = datetime.fromisoformat(latest_event.recorded_at)
+        recorded_at = parse_datetime_value(latest_event.recorded_at) or now
         age_hours = max((now - recorded_at).total_seconds() / 3600.0, 0.0)
         latest_rehearsal_status = str(details.get("status", "unknown"))
         blockers: list[str] = []
@@ -145,15 +141,12 @@ class ControlPlaneRuntimeValidationService:
             reminder_interval_seconds=self.reminder_interval_seconds,
             escalation_interval_seconds=self.escalation_interval_seconds,
             latest_rehearsal_event_id=latest_event.event_id,
-            latest_rehearsal_recorded_at=latest_event.recorded_at,
+            latest_rehearsal_recorded_at=_optional_timestamp_str(latest_event.recorded_at),
             latest_rehearsal_changed_by=latest_event.changed_by,
             latest_rehearsal_reason=latest_event.reason,
             latest_rehearsal_status=latest_rehearsal_status,
             latest_expected_backend=_optional_str(details.get("expected_backend")),
-            latest_expected_repository_layout=_optional_str(details.get("expected_repository_layout")),
             latest_database_backend=_optional_str(details.get("database_backend")),
-            latest_repository_layout=_optional_str(details.get("repository_layout")),
-            latest_mixed_backends=_optional_bool(details.get("mixed_backends")),
             latest_checks=_optional_bool_map(details.get("checks")),
             age_hours=age_hours,
             next_due_at=next_due_at,
@@ -176,6 +169,13 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _optional_timestamp_str(value: Any) -> str | None:
+    parsed = parse_datetime_value(value)
+    if parsed is not None:
+        return parsed.isoformat()
+    return _optional_str(value)
 
 
 def _optional_bool(value: Any) -> bool | None:

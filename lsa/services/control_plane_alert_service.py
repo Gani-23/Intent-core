@@ -10,6 +10,8 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from lsa.services.analytics_service import AnalyticsService
+from lsa.services.control_plane_authorization_service import AuthorizedActor, ControlPlaneAuthorizationService
+from lsa.services.datetime_utils import parse_datetime_value
 from lsa.services.oncall_policy import load_oncall_policy_bundle
 from lsa.services.runtime_validation_policy import RuntimeValidationPolicy, load_runtime_validation_policy_bundle
 from lsa.storage.files import JobRepository
@@ -23,6 +25,18 @@ from lsa.storage.models import (
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _json_safe(value: object) -> object:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 @dataclass(slots=True)
@@ -44,8 +58,13 @@ class ControlPlaneAlertService:
     runtime_validation_review_service: object | None = None
     deployment_readiness_service: object | None = None
     deployment_rejected_change_control_critical_age_hours: float = 24.0
+    authorization_service: ControlPlaneAuthorizationService | None = None
 
     _RUNTIME_VALIDATION_ALERT_KEY_PREFIX = "control-plane-runtime-validation:"
+    _LIVE_WORKLOAD_TARGET_VALIDATION_ALERT_KEY_PREFIX = "control-plane-live-workload-target-validation:"
+    _LIVE_WORKLOAD_PROOF_ALERT_KEY_PREFIX = "control-plane-live-workload-proof:"
+    _BACKUP_VALIDATION_ALERT_KEY_PREFIX = "control-plane-backup-validation:"
+    _BACKUP_EXPORT_ALERT_KEY_PREFIX = "control-plane-backup-export:"
     _RUNTIME_VALIDATION_REVIEW_ALERT_KEY_PREFIX = "control-plane-runtime-validation-review:"
     _DEPLOYMENT_READINESS_ALERT_KEY_PREFIX = "control-plane-deployment-readiness:"
     _DEPLOYMENT_READINESS_TEAM_ALERT_KEY_PREFIX = "control-plane-deployment-readiness-team:"
@@ -58,6 +77,22 @@ class ControlPlaneAlertService:
             self._runtime_validation_candidate(
                 report_payload,
                 self._latest_alert_with_prefix(self._RUNTIME_VALIDATION_ALERT_KEY_PREFIX),
+            ),
+            self._live_workload_target_validation_candidate(
+                report_payload,
+                self._latest_alert_with_prefix(self._LIVE_WORKLOAD_TARGET_VALIDATION_ALERT_KEY_PREFIX),
+            ),
+            self._live_workload_proof_candidate(
+                report_payload,
+                self._latest_alert_with_prefix(self._LIVE_WORKLOAD_PROOF_ALERT_KEY_PREFIX),
+            ),
+            self._backup_validation_candidate(
+                report_payload,
+                self._latest_alert_with_prefix(self._BACKUP_VALIDATION_ALERT_KEY_PREFIX),
+            ),
+            self._backup_export_candidate(
+                report_payload,
+                self._latest_alert_with_prefix(self._BACKUP_EXPORT_ALERT_KEY_PREFIX),
             ),
             self._deployment_readiness_candidate(
                 self._latest_alert_with_prefix(self._DEPLOYMENT_READINESS_ALERT_KEY_PREFIX),
@@ -78,6 +113,75 @@ class ControlPlaneAlertService:
 
     def list_alerts(self, limit: int | None = None) -> list[ControlPlaneAlertRecord]:
         return self.job_repository.list_control_plane_alerts(limit)
+
+    def list_oncall_change_requests_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        status: str | None = None,
+    ) -> list[ControlPlaneOnCallChangeRequestRecord]:
+        records = self.list_oncall_change_requests(status=status)
+        if self.authorization_service is None:
+            return records
+        if self.authorization_service.is_admin(actor):
+            return records
+        actor_team = self.authorization_service.require_team_scope(actor)
+        return [
+            record
+            for record in records
+            if self.authorization_service.normalize_team(record.team_name) == actor_team
+            and record.environment_name == self.authorization_service.environment_name
+        ]
+
+    def get_oncall_change_request_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        request_id: str,
+    ) -> ControlPlaneOnCallChangeRequestRecord:
+        record = self.get_oncall_change_request(request_id)
+        if self.authorization_service is not None:
+            self.authorization_service.require_environment_scope(actor, record.environment_name)
+            self.authorization_service.require_team_scope(actor, record.team_name)
+        return record
+
+    def list_oncall_schedules_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        active_only: bool = False,
+    ) -> list[ControlPlaneOnCallScheduleRecord]:
+        records = self.list_oncall_schedules(active_only=active_only)
+        if self.authorization_service is None:
+            return records
+        if self.authorization_service.is_admin(actor):
+            return records
+        actor_team = self.authorization_service.require_team_scope(actor)
+        return [
+            record
+            for record in records
+            if self.authorization_service.normalize_team(record.team_name) == actor_team
+            and record.environment_name == self.authorization_service.environment_name
+        ]
+
+    def preview_oncall_route_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        reference_timestamp: datetime | None = None,
+    ) -> dict:
+        preview = self.preview_oncall_route(reference_timestamp=reference_timestamp)
+        if self.authorization_service is None:
+            return preview
+        resolved_route = preview.get("resolved_route")
+        if resolved_route is None:
+            return preview
+        self.authorization_service.require_environment_scope(
+            actor,
+            str(resolved_route.get("environment_name") or self.default_environment_name),
+        )
+        self.authorization_service.require_team_scope(actor, str(resolved_route.get("team_name") or ""))
+        return preview
 
     def get_alert(self, alert_id: str) -> ControlPlaneAlertRecord:
         return self.job_repository.get_control_plane_alert(alert_id)
@@ -215,6 +319,64 @@ class ControlPlaneAlertService:
         )
         return self.job_repository.append_control_plane_oncall_schedule(proposed_record)
 
+    def create_oncall_schedule_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        created_by: str,
+        created_by_team: str | None = None,
+        created_by_role: str | None = None,
+        environment_name: str | None = None,
+        team_name: str,
+        timezone_name: str,
+        change_reason: str | None = None,
+        approved_by: str | None = None,
+        approved_by_team: str | None = None,
+        approved_by_role: str | None = None,
+        approval_note: str | None = None,
+        weekdays: list[int],
+        start_time: str,
+        end_time: str,
+        priority: int = 100,
+        rotation_name: str | None = None,
+        effective_start_date: str | None = None,
+        effective_end_date: str | None = None,
+        webhook_url: str | None = None,
+        escalation_webhook_url: str | None = None,
+    ) -> ControlPlaneOnCallScheduleRecord:
+        if self.authorization_service is not None:
+            environment_name = self.authorization_service.require_environment_scope(actor, environment_name)
+            scoped_team = self.authorization_service.require_team_scope(
+                actor,
+                team_name,
+                created_by_team,
+                approved_by_team,
+            )
+            created_by_team = scoped_team
+            approved_by_team = scoped_team if approved_by else None
+        return self.create_oncall_schedule(
+            created_by=created_by,
+            created_by_team=created_by_team,
+            created_by_role=created_by_role,
+            environment_name=environment_name,
+            team_name=team_name,
+            timezone_name=timezone_name,
+            change_reason=change_reason,
+            approved_by=approved_by,
+            approved_by_team=approved_by_team,
+            approved_by_role=approved_by_role,
+            approval_note=approval_note,
+            weekdays=weekdays,
+            start_time=start_time,
+            end_time=end_time,
+            priority=priority,
+            rotation_name=rotation_name,
+            effective_start_date=effective_start_date,
+            effective_end_date=effective_end_date,
+            webhook_url=webhook_url,
+            escalation_webhook_url=escalation_webhook_url,
+        )
+
     def list_oncall_schedules(self, *, active_only: bool = False) -> list[ControlPlaneOnCallScheduleRecord]:
         records = self.job_repository.list_control_plane_oncall_schedules()
         if not active_only:
@@ -232,6 +394,24 @@ class ControlPlaneAlertService:
             cancelled_at=_utc_now(),
             cancelled_by=cancelled_by,
         )
+
+    def cancel_oncall_schedule_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        schedule_id: str,
+        cancelled_by: str,
+    ) -> ControlPlaneOnCallScheduleRecord:
+        if self.authorization_service is not None:
+            record = next(
+                (item for item in self.job_repository.list_control_plane_oncall_schedules() if item.schedule_id == schedule_id),
+                None,
+            )
+            if record is None:
+                raise FileNotFoundError(schedule_id)
+            self.authorization_service.require_environment_scope(actor, record.environment_name)
+            self.authorization_service.require_team_scope(actor, record.team_name)
+        return self.cancel_oncall_schedule(schedule_id=schedule_id, cancelled_by=cancelled_by)
 
     def submit_oncall_change_request(
         self,
@@ -357,6 +537,49 @@ class ControlPlaneAlertService:
             )
         )
 
+    def submit_oncall_change_request_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        created_by: str,
+        created_by_team: str | None = None,
+        created_by_role: str | None = None,
+        environment_name: str | None = None,
+        team_name: str,
+        timezone_name: str,
+        change_reason: str | None,
+        weekdays: list[int],
+        start_time: str,
+        end_time: str,
+        priority: int = 100,
+        rotation_name: str | None = None,
+        effective_start_date: str | None = None,
+        effective_end_date: str | None = None,
+        webhook_url: str | None = None,
+        escalation_webhook_url: str | None = None,
+    ) -> ControlPlaneOnCallChangeRequestRecord:
+        if self.authorization_service is not None:
+            environment_name = self.authorization_service.require_environment_scope(actor, environment_name)
+            created_by_team = self.authorization_service.require_team_scope(actor, team_name, created_by_team)
+        return self.submit_oncall_change_request(
+            created_by=created_by,
+            created_by_team=created_by_team,
+            created_by_role=created_by_role,
+            environment_name=environment_name,
+            team_name=team_name,
+            timezone_name=timezone_name,
+            change_reason=change_reason,
+            weekdays=weekdays,
+            start_time=start_time,
+            end_time=end_time,
+            priority=priority,
+            rotation_name=rotation_name,
+            effective_start_date=effective_start_date,
+            effective_end_date=effective_end_date,
+            webhook_url=webhook_url,
+            escalation_webhook_url=escalation_webhook_url,
+        )
+
     def list_oncall_change_requests(
         self,
         *,
@@ -434,6 +657,34 @@ class ControlPlaneAlertService:
             applied_schedule_id=applied_schedule.schedule_id,
         )
 
+    def review_oncall_change_request_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        request_id: str,
+        decision: str,
+        reviewed_by: str,
+        reviewed_by_team: str | None = None,
+        reviewed_by_role: str | None = None,
+        review_note: str | None = None,
+    ) -> ControlPlaneOnCallChangeRequestRecord:
+        if self.authorization_service is not None:
+            request = self.job_repository.get_control_plane_oncall_change_request(request_id)
+            self.authorization_service.require_environment_scope(actor, request.environment_name)
+            reviewed_by_team = self.authorization_service.require_team_scope(
+                actor,
+                request.team_name,
+                reviewed_by_team,
+            )
+        return self.review_oncall_change_request(
+            request_id=request_id,
+            decision=decision,
+            reviewed_by=reviewed_by,
+            reviewed_by_team=reviewed_by_team,
+            reviewed_by_role=reviewed_by_role,
+            review_note=review_note,
+        )
+
     def assign_oncall_change_request(
         self,
         *,
@@ -456,6 +707,32 @@ class ControlPlaneAlertService:
             assigned_to=normalized_assigned_to,
             assigned_to_team=self._normalize_team(assigned_to_team),
             assigned_at=_utc_now(),
+            assigned_by=assigned_by,
+            assignment_note=assignment_note,
+        )
+
+    def assign_oncall_change_request_scoped(
+        self,
+        *,
+        actor: AuthorizedActor,
+        request_id: str,
+        assigned_to: str,
+        assigned_to_team: str | None = None,
+        assigned_by: str,
+        assignment_note: str | None = None,
+    ) -> ControlPlaneOnCallChangeRequestRecord:
+        if self.authorization_service is not None:
+            request = self.job_repository.get_control_plane_oncall_change_request(request_id)
+            self.authorization_service.require_environment_scope(actor, request.environment_name)
+            assigned_to_team = self.authorization_service.require_team_scope(
+                actor,
+                request.team_name,
+                assigned_to_team,
+            )
+        return self.assign_oncall_change_request(
+            request_id=request_id,
+            assigned_to=assigned_to,
+            assigned_to_team=assigned_to_team,
             assigned_by=assigned_by,
             assignment_note=assignment_note,
         )
@@ -501,10 +778,12 @@ class ControlPlaneAlertService:
             self._active_incident_alert(
                 exclude_prefixes=(
                     self._RUNTIME_VALIDATION_ALERT_KEY_PREFIX,
+                    self._LIVE_WORKLOAD_PROOF_ALERT_KEY_PREFIX,
                     self._RUNTIME_VALIDATION_REVIEW_ALERT_KEY_PREFIX,
                 )
             ),
             self._active_incident_alert(include_prefix=self._RUNTIME_VALIDATION_ALERT_KEY_PREFIX),
+            self._active_incident_alert(include_prefix=self._LIVE_WORKLOAD_PROOF_ALERT_KEY_PREFIX),
             self._active_incident_alert(include_prefix=self._RUNTIME_VALIDATION_REVIEW_ALERT_KEY_PREFIX),
         ):
             if active_alert is None:
@@ -678,6 +957,279 @@ class ControlPlaneAlertService:
             error=None,
         )
 
+    def _live_workload_proof_candidate(
+        self,
+        report: dict,
+        latest: ControlPlaneAlertRecord | None,
+    ) -> ControlPlaneAlertRecord | None:
+        live_workload = dict(report.get("live_workload_proof_validation", {}))
+        status = str(live_workload.get("status", "missing"))
+        cadence_status = str(live_workload.get("cadence_status", "missing"))
+        latest_proof_status = live_workload.get("latest_proof_status")
+
+        if status == "missing":
+            finding_codes = ["live_workload_drift_proof_missing"]
+            alert_status = "critical"
+            severity = "critical"
+            summary = "No live workload drift-proof evidence exists for the active environment."
+        elif status == "failed":
+            finding_codes = ["live_workload_drift_proof_failed"]
+            alert_status = "critical"
+            severity = "critical"
+            summary = "The latest live workload drift proof did not pass."
+        elif cadence_status == "due_soon":
+            finding_codes = ["live_workload_drift_proof_due_soon"]
+            alert_status = "degraded"
+            severity = "warning"
+            summary = "Live workload drift proof is approaching its warning threshold."
+        elif status == "warning" or cadence_status == "aging":
+            finding_codes = ["live_workload_drift_proof_age"]
+            alert_status = "degraded"
+            severity = "warning"
+            summary = "Live workload drift proof is older than the configured warning threshold."
+        elif status == "critical" or cadence_status == "overdue":
+            finding_codes = ["live_workload_drift_proof_age"]
+            alert_status = "critical"
+            severity = "critical"
+            summary = "Live workload drift proof is older than the configured critical threshold."
+        else:
+            if latest is None or latest.status == "healthy" or self._lifecycle_event(latest) == "recovery":
+                return None
+            finding_codes = []
+            alert_status = "healthy"
+            severity = "info"
+            summary = "Live workload drift proof returned to a fresh state."
+
+        if alert_status == "healthy":
+            alert_key = f"{self._LIVE_WORKLOAD_PROOF_ALERT_KEY_PREFIX}healthy:recovered"
+            lifecycle_event = "recovery"
+        else:
+            alert_key = f"{self._LIVE_WORKLOAD_PROOF_ALERT_KEY_PREFIX}{alert_status}:{','.join(sorted(finding_codes))}"
+            lifecycle_event = "incident"
+
+        return ControlPlaneAlertRecord(
+            alert_id=uuid4().hex[:16],
+            created_at=_utc_now(),
+            alert_key=alert_key,
+            status=alert_status,
+            severity=severity,
+            summary=summary,
+            finding_codes=sorted(finding_codes),
+            delivery_state="skipped",
+            payload={
+                "report": report,
+                "live_workload_proof_validation": live_workload,
+                "live_workload_proof_status": status,
+                "live_workload_proof_cadence_status": cadence_status,
+                "latest_proof_status": latest_proof_status,
+                "alert_family": "live_workload_proof",
+                "lifecycle_event": lifecycle_event,
+                "source_alert_id": None,
+            },
+            error=None,
+        )
+
+    def _live_workload_target_validation_candidate(
+        self,
+        report: dict,
+        latest: ControlPlaneAlertRecord | None,
+    ) -> ControlPlaneAlertRecord | None:
+        target_validation = dict(report.get("live_workload_target_validation", {}))
+        status = str(target_validation.get("status", "missing"))
+        cadence_status = str(target_validation.get("cadence_status", "missing"))
+
+        if status == "missing":
+            finding_codes = ["live_workload_target_validation_missing"]
+            alert_status = "critical"
+            severity = "critical"
+            summary = "No live workload target validation evidence exists for the active environment."
+        elif status == "failed":
+            finding_codes = ["live_workload_target_validation_failed"]
+            alert_status = "critical"
+            severity = "critical"
+            summary = "The latest live workload target validation did not pass."
+        elif cadence_status == "due_soon":
+            finding_codes = ["live_workload_target_validation_due_soon"]
+            alert_status = "degraded"
+            severity = "warning"
+            summary = "Live workload target validation is approaching its warning threshold."
+        elif status == "warning" or cadence_status == "aging":
+            finding_codes = ["live_workload_target_validation_age"]
+            alert_status = "degraded"
+            severity = "warning"
+            summary = "Live workload target validation is older than the configured warning threshold."
+        elif status == "critical" or cadence_status == "overdue":
+            finding_codes = ["live_workload_target_validation_age"]
+            alert_status = "critical"
+            severity = "critical"
+            summary = "Live workload target validation is older than the configured critical threshold."
+        else:
+            if latest is None or latest.status == "healthy" or self._lifecycle_event(latest) == "recovery":
+                return None
+            finding_codes = []
+            alert_status = "healthy"
+            severity = "info"
+            summary = "Live workload target validation returned to a fresh state."
+
+        if alert_status == "healthy":
+            alert_key = f"{self._LIVE_WORKLOAD_TARGET_VALIDATION_ALERT_KEY_PREFIX}healthy:recovered"
+            lifecycle_event = "recovery"
+        else:
+            alert_key = (
+                f"{self._LIVE_WORKLOAD_TARGET_VALIDATION_ALERT_KEY_PREFIX}"
+                f"{alert_status}:{','.join(sorted(finding_codes))}"
+            )
+            lifecycle_event = "incident"
+
+        return ControlPlaneAlertRecord(
+            alert_id=uuid4().hex[:16],
+            created_at=_utc_now(),
+            alert_key=alert_key,
+            status=alert_status,
+            severity=severity,
+            summary=summary,
+            finding_codes=sorted(finding_codes),
+            delivery_state="skipped",
+            payload={
+                "report": report,
+                "live_workload_target_validation": target_validation,
+                "live_workload_target_validation_status": status,
+                "live_workload_target_validation_cadence_status": cadence_status,
+                "alert_family": "live_workload_target_validation",
+                "lifecycle_event": lifecycle_event,
+                "source_alert_id": None,
+            },
+            error=None,
+        )
+
+    def _backup_validation_candidate(
+        self,
+        report: dict,
+        latest: ControlPlaneAlertRecord | None,
+    ) -> ControlPlaneAlertRecord | None:
+        backup_validation = dict(report.get("backup_validation", {}))
+        status = str(backup_validation.get("status", "missing"))
+        cadence_status = str(backup_validation.get("cadence_status", "missing"))
+        latest_rehearsal_status = backup_validation.get("latest_rehearsal_status")
+
+        if status == "missing":
+            finding_codes = ["backup_rehearsal_missing"]
+            alert_status = "critical"
+            severity = "critical"
+            summary = "No control-plane backup rehearsal evidence exists for the active environment."
+        elif status == "failed":
+            finding_codes = ["backup_rehearsal_failed"]
+            alert_status = "critical"
+            severity = "critical"
+            summary = "The latest control-plane backup rehearsal did not pass."
+        elif cadence_status == "due_soon":
+            finding_codes = ["backup_rehearsal_due_soon"]
+            alert_status = "degraded"
+            severity = "warning"
+            summary = "Control-plane backup proof is approaching its warning threshold."
+        elif status == "warning" or cadence_status == "aging":
+            finding_codes = ["backup_rehearsal_age"]
+            alert_status = "degraded"
+            severity = "warning"
+            summary = "Control-plane backup proof is older than the configured warning threshold."
+        elif status == "critical" or cadence_status == "overdue":
+            finding_codes = ["backup_rehearsal_age"]
+            alert_status = "critical"
+            severity = "critical"
+            summary = "Control-plane backup proof is older than the configured critical threshold."
+        else:
+            if latest is None or latest.status == "healthy" or self._lifecycle_event(latest) == "recovery":
+                return None
+            finding_codes = []
+            alert_status = "healthy"
+            severity = "info"
+            summary = "Control-plane backup proof returned to a fresh state."
+
+        if alert_status == "healthy":
+            alert_key = f"{self._BACKUP_VALIDATION_ALERT_KEY_PREFIX}healthy:recovered"
+            lifecycle_event = "recovery"
+        else:
+            alert_key = f"{self._BACKUP_VALIDATION_ALERT_KEY_PREFIX}{alert_status}:{','.join(sorted(finding_codes))}"
+            lifecycle_event = "incident"
+
+        return ControlPlaneAlertRecord(
+            alert_id=uuid4().hex[:16],
+            created_at=_utc_now(),
+            alert_key=alert_key,
+            status=alert_status,
+            severity=severity,
+            summary=summary,
+            finding_codes=sorted(finding_codes),
+            delivery_state="skipped",
+            payload={
+                "report": report,
+                "backup_validation": backup_validation,
+                "backup_validation_status": status,
+                "backup_validation_cadence_status": cadence_status,
+                "latest_rehearsal_status": latest_rehearsal_status,
+                "alert_family": "backup_validation",
+                "lifecycle_event": lifecycle_event,
+                "source_alert_id": None,
+            },
+            error=None,
+        )
+
+    def _backup_export_candidate(
+        self,
+        report: dict,
+        latest: ControlPlaneAlertRecord | None,
+    ) -> ControlPlaneAlertRecord | None:
+        backup_export = dict(report.get("backup_export_validation", {}))
+        status = str(backup_export.get("status", "missing"))
+        if status == "missing":
+            finding_codes = ["backup_export_missing"]
+            alert_status = "critical"
+            severity = "critical"
+            summary = "No control-plane backup export evidence exists for the active environment."
+        elif status == "warning":
+            finding_codes = ["backup_export_age"]
+            alert_status = "degraded"
+            severity = "warning"
+            summary = "Control-plane backup export freshness is beyond the warning threshold."
+        elif status == "critical":
+            finding_codes = ["backup_export_age"]
+            alert_status = "critical"
+            severity = "critical"
+            summary = "Control-plane backup export freshness is beyond the critical threshold."
+        else:
+            if latest is None or latest.status == "healthy" or self._lifecycle_event(latest) == "recovery":
+                return None
+            finding_codes = []
+            alert_status = "healthy"
+            severity = "info"
+            summary = "Control-plane backup export freshness returned to a healthy state."
+
+        if alert_status == "healthy":
+            alert_key = f"{self._BACKUP_EXPORT_ALERT_KEY_PREFIX}healthy:recovered"
+            lifecycle_event = "recovery"
+        else:
+            alert_key = f"{self._BACKUP_EXPORT_ALERT_KEY_PREFIX}{alert_status}:{','.join(sorted(finding_codes))}"
+            lifecycle_event = "incident"
+
+        return ControlPlaneAlertRecord(
+            alert_id=uuid4().hex[:16],
+            created_at=_utc_now(),
+            alert_key=alert_key,
+            status=alert_status,
+            severity=severity,
+            summary=summary,
+            finding_codes=sorted(finding_codes),
+            delivery_state="skipped",
+            payload={
+                "report": report,
+                "backup_export_validation": backup_export,
+                "alert_family": "backup_export",
+                "lifecycle_event": lifecycle_event,
+                "source_alert_id": None,
+            },
+            error=None,
+        )
+
     def _deployment_readiness_candidate(
         self,
         latest: ControlPlaneAlertRecord | None,
@@ -792,7 +1344,8 @@ class ControlPlaneAlertService:
         if latest is None:
             return False
         not_before = datetime.now(UTC) - timedelta(seconds=self.dedup_window_seconds)
-        return datetime.fromisoformat(latest.created_at) >= not_before
+        created_at = parse_datetime_value(latest.created_at)
+        return created_at is not None and created_at >= not_before
 
     def _emit_candidate(
         self,
@@ -862,7 +1415,7 @@ class ControlPlaneAlertService:
                 return "escalation"
             return "reminder"
 
-        created_at = datetime.fromisoformat(root_alert.created_at)
+        created_at = parse_datetime_value(root_alert.created_at) or datetime.now(UTC)
         age_seconds = (datetime.now(UTC) - created_at).total_seconds()
         latest_escalation = self._latest_follow_up(root_alert.alert_id, "escalation")
         latest_reminder = self._latest_follow_up(root_alert.alert_id, "reminder")
@@ -870,14 +1423,18 @@ class ControlPlaneAlertService:
         if age_seconds >= escalation_interval_seconds:
             if latest_escalation is None:
                 return "escalation"
-            last_escalation_age = (datetime.now(UTC) - datetime.fromisoformat(latest_escalation.created_at)).total_seconds()
+            last_escalation_age = (
+                datetime.now(UTC) - (parse_datetime_value(latest_escalation.created_at) or datetime.now(UTC))
+            ).total_seconds()
             if last_escalation_age >= escalation_interval_seconds:
                 return "escalation"
 
         if age_seconds >= reminder_interval_seconds:
             if latest_reminder is None:
                 return "reminder"
-            last_reminder_age = (datetime.now(UTC) - datetime.fromisoformat(latest_reminder.created_at)).total_seconds()
+            last_reminder_age = (
+                datetime.now(UTC) - (parse_datetime_value(latest_reminder.created_at) or datetime.now(UTC))
+            ).total_seconds()
             if last_reminder_age >= reminder_interval_seconds:
                 return "reminder"
         return None
@@ -889,6 +1446,8 @@ class ControlPlaneAlertService:
                 _optional_float(record.payload.get("reminder_interval_seconds")) or self.reminder_interval_seconds,
                 _optional_float(record.payload.get("escalation_interval_seconds")) or self.escalation_interval_seconds,
             )
+        if alert_family == "backup_validation":
+            return (self.reminder_interval_seconds, self.escalation_interval_seconds)
         if alert_family != "runtime_validation":
             return (self.reminder_interval_seconds, self.escalation_interval_seconds)
         runtime_validation = dict(record.payload.get("runtime_validation", {}))
@@ -940,7 +1499,10 @@ class ControlPlaneAlertService:
 
     def _build_follow_up_alert(self, *, root_alert: ControlPlaneAlertRecord, lifecycle_event: str) -> ControlPlaneAlertRecord:
         label = "escalated" if lifecycle_event == "escalation" else "reminder"
-        age_minutes = int((datetime.now(UTC) - datetime.fromisoformat(root_alert.created_at)).total_seconds() // 60)
+        age_minutes = int(
+            (datetime.now(UTC) - (parse_datetime_value(root_alert.created_at) or datetime.now(UTC))).total_seconds()
+            // 60
+        )
         return ControlPlaneAlertRecord(
             alert_id=uuid4().hex[:16],
             created_at=_utc_now(),
@@ -954,6 +1516,7 @@ class ControlPlaneAlertService:
                 "report": dict(root_alert.payload.get("report", {})),
                 "alert_family": root_alert.payload.get("alert_family"),
                 "runtime_validation": dict(root_alert.payload.get("runtime_validation", {})),
+                "backup_validation": dict(root_alert.payload.get("backup_validation", {})),
                 "runtime_validation_review": dict(root_alert.payload.get("runtime_validation_review", {})),
                 "policy_source": root_alert.payload.get("policy_source"),
                 "reminder_interval_seconds": root_alert.payload.get("reminder_interval_seconds"),
@@ -977,9 +1540,11 @@ class ControlPlaneAlertService:
         now = datetime.now(UTC)
         if record.cancelled_at is not None:
             return False
-        if record.starts_at is not None and datetime.fromisoformat(record.starts_at) > now:
+        starts_at = parse_datetime_value(record.starts_at)
+        if starts_at is not None and starts_at > now:
             return False
-        if record.expires_at is not None and datetime.fromisoformat(record.expires_at) <= now:
+        expires_at = parse_datetime_value(record.expires_at)
+        if expires_at is not None and expires_at <= now:
             return False
         return True
 
@@ -1026,7 +1591,7 @@ class ControlPlaneAlertService:
             )
 
         if webhook_url:
-            payload_bytes = json.dumps(record.to_dict(), sort_keys=True).encode("utf-8")
+            payload_bytes = json.dumps(_json_safe(record.to_dict()), sort_keys=True).encode("utf-8")
             request = Request(
                 webhook_url,
                 data=payload_bytes,
@@ -1084,7 +1649,7 @@ class ControlPlaneAlertService:
                     if item["kind"] == "jsonl" and item["target"] == sink_target:
                         item["state"] = "delivered"
                 with sink.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(delivered.to_dict(), sort_keys=True))
+                    handle.write(json.dumps(_json_safe(delivered.to_dict()), sort_keys=True))
                     handle.write("\n")
             except OSError as exc:
                 sink_error = str(exc)
@@ -1225,7 +1790,7 @@ class ControlPlaneAlertService:
 
     def _route_sort_key(self, record: ControlPlaneOnCallScheduleRecord) -> tuple[float, float, float, float]:
         specificity_level, window_span_days = self._route_specificity(record)
-        created_at = datetime.fromisoformat(record.created_at).timestamp()
+        created_at = (parse_datetime_value(record.created_at) or datetime.now(UTC)).timestamp()
         return (-float(record.priority), -float(specificity_level), float(window_span_days), -created_at)
 
     def _route_specificity(self, record: ControlPlaneOnCallScheduleRecord) -> tuple[int, int]:

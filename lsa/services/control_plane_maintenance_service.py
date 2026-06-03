@@ -4,7 +4,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from lsa.services.control_plane_backup_operations_service import ControlPlaneBackupOperationsService
 from lsa.services.control_plane_backup_service import ControlPlaneBackupService, ControlPlaneBackupSummary
+from lsa.services.control_plane_backup_validation_service import ControlPlaneBackupValidationService
+from lsa.services.control_plane_live_workload_proof_validation_service import (
+    ControlPlaneLiveWorkloadProofValidationService,
+)
+from lsa.services.control_plane_live_workload_target_validation_service import (
+    ControlPlaneLiveWorkloadTargetValidationService,
+)
+from lsa.services.control_plane_observability_export_service import ControlPlaneObservabilityExportService
 from lsa.services.control_plane_deployment_readiness_service import ControlPlaneDeploymentReadinessService
 from lsa.services.job_service import JobService
 from lsa.services.control_plane_runtime_validation_review_service import ControlPlaneRuntimeValidationReviewService
@@ -42,6 +51,11 @@ class ControlPlaneMaintenancePreflight:
     completed_jobs: int
     failed_jobs: int
     runtime_validation: dict[str, Any]
+    live_workload_target_validation: dict[str, Any]
+    live_workload_proof_validation: dict[str, Any]
+    backup_validation: dict[str, Any]
+    backup_export_validation: dict[str, Any]
+    observability_export_validation: dict[str, Any]
     deployment_readiness: dict[str, Any]
     runtime_validation_change_control_requests: list[dict[str, Any]] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
@@ -76,6 +90,11 @@ class ControlPlaneMaintenancePreflight:
             "completed_jobs": self.completed_jobs,
             "failed_jobs": self.failed_jobs,
             "runtime_validation": dict(self.runtime_validation),
+            "live_workload_target_validation": dict(self.live_workload_target_validation),
+            "live_workload_proof_validation": dict(self.live_workload_proof_validation),
+            "backup_validation": dict(self.backup_validation),
+            "backup_export_validation": dict(self.backup_export_validation),
+            "observability_export_validation": dict(self.observability_export_validation),
             "deployment_readiness": dict(self.deployment_readiness),
             "runtime_validation_change_control_requests": [
                 dict(item) for item in self.runtime_validation_change_control_requests
@@ -163,6 +182,39 @@ class ControlPlaneMaintenanceService:
             or self.settings.analytics_runtime_rehearsal_critical_age_hours,
             policy_source=runtime_policy_bundle.source_for(environment_name=self.settings.environment_name),
         ).build_summary()
+        live_workload_target_validation = ControlPlaneLiveWorkloadTargetValidationService(
+            settings=self.settings,
+            job_repository=self.job_repository,
+            job_service=self.job_service,
+            live_workload_drift_proof_service=None,
+        ).build_summary()
+        live_workload_proof_validation = ControlPlaneLiveWorkloadProofValidationService(
+            job_repository=self.job_repository,
+            environment_name=self.settings.environment_name,
+            due_soon_age_hours=self.settings.analytics_live_workload_proof_due_soon_age_hours,
+            warning_age_hours=self.settings.analytics_live_workload_proof_warning_age_hours,
+            critical_age_hours=self.settings.analytics_live_workload_proof_critical_age_hours,
+        ).build_summary()
+        backup_validation = ControlPlaneBackupValidationService(
+            job_repository=self.job_repository,
+            environment_name=self.settings.environment_name,
+            due_soon_age_hours=self.settings.analytics_backup_rehearsal_due_soon_age_hours,
+            warning_age_hours=self.settings.analytics_backup_rehearsal_warning_age_hours,
+            critical_age_hours=self.settings.analytics_backup_rehearsal_critical_age_hours,
+        ).build_summary()
+        backup_export_validation = ControlPlaneBackupOperationsService(
+            settings=self.settings,
+            backup_service=self.backup_service,
+            job_repository=self.job_repository,
+            job_service=self.job_service,
+        ).latest_backup_export_validation()
+        observability_export_validation = ControlPlaneObservabilityExportService(
+            settings=self.settings,
+            job_service=self.job_service,
+            analytics_service=None,
+            metrics_service=None,
+            privileged_api_audit_service=None,
+        ).latest_export_validation()
         review_service = ControlPlaneRuntimeValidationReviewService(
             settings=self.settings,
             job_service=self.job_service,
@@ -210,6 +262,40 @@ class ControlPlaneMaintenanceService:
                 blockers.append(runtime_warning_code)
             else:
                 warnings.append(runtime_warning_code)
+        if live_workload_target_validation.status != "passed":
+            target_warning_code = f"live_workload_target_validation_{live_workload_target_validation.status}"
+            if self.settings.maintenance_live_workload_target_validation_required:
+                blockers.append(target_warning_code)
+            else:
+                warnings.append(target_warning_code)
+        if live_workload_proof_validation.status != "passed":
+            live_workload_warning_code = (
+                f"live_workload_proof_validation_{live_workload_proof_validation.status}"
+            )
+            if self.settings.maintenance_live_workload_proof_required:
+                blockers.append(live_workload_warning_code)
+            else:
+                warnings.append(live_workload_warning_code)
+        if backup_validation.status != "passed":
+            backup_warning_code = f"backup_validation_{backup_validation.status}"
+            if self.settings.maintenance_backup_validation_required:
+                blockers.append(backup_warning_code)
+            else:
+                warnings.append(backup_warning_code)
+        if backup_export_validation.status != "passed":
+            backup_export_warning_code = f"backup_export_validation_{backup_export_validation.status}"
+            if self.settings.maintenance_backup_validation_required:
+                blockers.append(backup_export_warning_code)
+            else:
+                warnings.append(backup_export_warning_code)
+        if observability_export_validation.status != "passed":
+            observability_warning_code = (
+                f"observability_export_validation_{observability_export_validation.status}"
+            )
+            if self.settings.maintenance_observability_validation_required:
+                blockers.append(observability_warning_code)
+            else:
+                warnings.append(observability_warning_code)
         if not deployment_readiness.ready:
             if self.settings.maintenance_deployment_readiness_required:
                 blockers.extend(
@@ -252,6 +338,11 @@ class ControlPlaneMaintenanceService:
             completed_jobs=completed_jobs,
             failed_jobs=failed_jobs,
             runtime_validation=runtime_validation.to_dict(),
+            live_workload_target_validation=live_workload_target_validation.to_dict(),
+            live_workload_proof_validation=live_workload_proof_validation.to_dict(),
+            backup_validation=backup_validation.to_dict(),
+            backup_export_validation=backup_export_validation.to_dict(),
+            observability_export_validation=observability_export_validation.to_dict(),
             deployment_readiness=deployment_readiness.to_dict(),
             runtime_validation_change_control_requests=runtime_validation_change_control_requests,
             blockers=blockers,
@@ -266,6 +357,7 @@ class ControlPlaneMaintenanceService:
         reason: str | None = None,
         allow_running_jobs: bool = False,
         disable_maintenance_on_success: bool = True,
+        actor_details: dict | None = None,
     ) -> ControlPlaneMaintenanceWorkflowSummary:
         preflight = self.build_preflight()
         effective_blockers = [
@@ -295,6 +387,7 @@ class ControlPlaneMaintenanceService:
                 "disable_maintenance_on_success": disable_maintenance_on_success,
                 "preflight": preflight.to_dict(),
             },
+            actor_details=actor_details,
         )
 
         try:
@@ -302,6 +395,7 @@ class ControlPlaneMaintenanceService:
                 maintenance_after_enable = self.job_service.enable_maintenance_mode(
                     changed_by=changed_by,
                     reason=reason or "control-plane maintenance workflow",
+                    actor_details=actor_details,
                 )
                 maintenance_enabled_by_workflow = True
                 steps.append("maintenance_mode_enabled")
@@ -315,6 +409,7 @@ class ControlPlaneMaintenanceService:
                 changed_by=changed_by,
                 reason=reason,
                 details=backup.to_dict(),
+                actor_details=actor_details,
             )
             steps.append("backup_exported")
 
@@ -324,6 +419,7 @@ class ControlPlaneMaintenanceService:
                 changed_by=changed_by,
                 reason=reason,
                 details=schema_status,
+                actor_details=actor_details,
             )
             steps.append("schema_migrated")
 
@@ -331,6 +427,7 @@ class ControlPlaneMaintenanceService:
                 maintenance_final = self.job_service.disable_maintenance_mode(
                     changed_by=changed_by,
                     reason=reason or "control-plane maintenance workflow completed",
+                    actor_details=actor_details,
                 )
                 steps.append("maintenance_mode_disabled")
             else:
@@ -349,6 +446,7 @@ class ControlPlaneMaintenanceService:
                     "output_path": output_path,
                     "maintenance_mode_active": bool(self.job_repository.maintenance_mode_status()["active"]),
                 },
+                actor_details=actor_details,
             )
             raise
 
@@ -374,6 +472,7 @@ class ControlPlaneMaintenanceService:
             changed_by=changed_by,
             reason=reason,
             details=summary.to_dict(),
+            actor_details=actor_details,
         )
         return summary
 

@@ -2,27 +2,25 @@
 
 ## Still missing for a complete production product
 
-- full Postgres-first runtime backend instead of partial feature-gated slices
-- real operator UI/dashboard
-- tenant-aware authn/authz and RBAC
-- comprehensive audit-log product surface for all privileged changes
+- broader tenant/customer-grade authn/authz and fuller multi-org / multi-project RBAC if product scope expands beyond one org
 - production observability integration beyond local metrics output:
   - dashboards
-  - alert rules
-  - log/trace export
+  - external alert rules
+  - external log/trace shipping
 - deployment hardening beyond Compose-level shaping
 - real-world scale validation on messy live workloads
-- customer-grade onboarding, policy management, and admin workflows
+- customer-grade secret lifecycle and storage for real target credentials
+- deeper org scoping across incident, review, and historical maintenance records
+- final frontend polish and performance pass on the newer admin/workspace flows
 
 ## Highest-risk technical gaps
 
-- Postgres runtime is credible but not yet the dominant default path
-- runtime telemetry and drift flows still need broader live-workload proof
-- mixed-backend transition layouts increase operational complexity until cutover is completed
+- runtime telemetry and drift flows still need proof on more customer-like live targets beyond the existing public/test profiles and shipped sidecar harnesses
+- production observability still needs broader external integration proof
+- real target auth needs stronger secret lifecycle beyond local env indirection
 
 ## “Breakout” gaps
 
-- no operator UI that makes the system easy to adopt
 - no undeniable public proof point on a real workload yet
 - remediation/policy loop is useful, but not yet “must-talk-about-it” magical
-
+- frontend still needs another polish/perf pass before it feels fully flagship-grade everywhere

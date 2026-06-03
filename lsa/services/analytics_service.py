@@ -5,10 +5,22 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from lsa.services.control_plane_backup_validation_service import ControlPlaneBackupValidationService
+from lsa.services.control_plane_backup_operations_service import ControlPlaneBackupOperationsService
+from lsa.services.control_plane_live_workload_proof_validation_service import (
+    ControlPlaneLiveWorkloadProofValidationService,
+)
+from lsa.services.control_plane_live_workload_target_validation_service import (
+    ControlPlaneLiveWorkloadTargetValidationSummary,
+    ControlPlaneLiveWorkloadTargetValidationService,
+)
+from lsa.services.control_plane_observability_export_service import ControlPlaneObservabilityExportService
+from lsa.services.privileged_api_audit_service import PrivilegedApiAuditService
 from lsa.services.control_plane_deployment_readiness_service import (
     ControlPlaneDeploymentReadinessSummary,
 )
 from lsa.services.control_plane_runtime_validation_service import ControlPlaneRuntimeValidationService
+from lsa.services.datetime_utils import parse_datetime_value
 from lsa.services.runtime_validation_policy import (
     RuntimeValidationPolicy,
     load_runtime_validation_policy_bundle,
@@ -21,8 +33,11 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _day_from_timestamp(timestamp: str) -> str:
-    return datetime.fromisoformat(timestamp).date().isoformat()
+def _day_from_timestamp(timestamp: str | datetime) -> str:
+    parsed = parse_datetime_value(timestamp)
+    if parsed is None:
+        return str(timestamp)
+    return parsed.date().isoformat()
 
 
 @dataclass(slots=True)
@@ -257,10 +272,7 @@ class RuntimeValidationAnalyticsSummary:
     latest_rehearsal_changed_by: str | None = None
     latest_rehearsal_status: str | None = None
     latest_expected_backend: str | None = None
-    latest_expected_repository_layout: str | None = None
     latest_database_backend: str | None = None
-    latest_repository_layout: str | None = None
-    latest_mixed_backends: bool | None = None
     latest_checks: dict[str, bool] = field(default_factory=dict)
     age_hours: float | None = None
     next_due_at: str | None = None
@@ -285,14 +297,173 @@ class RuntimeValidationAnalyticsSummary:
             "latest_rehearsal_changed_by": self.latest_rehearsal_changed_by,
             "latest_rehearsal_status": self.latest_rehearsal_status,
             "latest_expected_backend": self.latest_expected_backend,
-            "latest_expected_repository_layout": self.latest_expected_repository_layout,
             "latest_database_backend": self.latest_database_backend,
-            "latest_repository_layout": self.latest_repository_layout,
-            "latest_mixed_backends": self.latest_mixed_backends,
             "latest_checks": dict(self.latest_checks),
             "age_hours": self.age_hours,
             "next_due_at": self.next_due_at,
             "due_in_hours": self.due_in_hours,
+            "blockers": list(self.blockers),
+        }
+
+
+@dataclass(slots=True)
+class BackupValidationAnalyticsSummary:
+    generated_at: str
+    environment_name: str
+    status: str
+    severity: str
+    cadence_status: str
+    due_soon_age_hours: float
+    warning_age_hours: float
+    critical_age_hours: float
+    latest_rehearsal_event_id: str | None = None
+    latest_rehearsal_recorded_at: str | None = None
+    latest_rehearsal_changed_by: str | None = None
+    latest_rehearsal_status: str | None = None
+    latest_checks: dict[str, bool] = field(default_factory=dict)
+    age_hours: float | None = None
+    next_due_at: str | None = None
+    due_in_hours: float | None = None
+    blockers: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "generated_at": self.generated_at,
+            "environment_name": self.environment_name,
+            "status": self.status,
+            "severity": self.severity,
+            "cadence_status": self.cadence_status,
+            "due_soon_age_hours": self.due_soon_age_hours,
+            "warning_age_hours": self.warning_age_hours,
+            "critical_age_hours": self.critical_age_hours,
+            "latest_rehearsal_event_id": self.latest_rehearsal_event_id,
+            "latest_rehearsal_recorded_at": self.latest_rehearsal_recorded_at,
+            "latest_rehearsal_changed_by": self.latest_rehearsal_changed_by,
+            "latest_rehearsal_status": self.latest_rehearsal_status,
+            "latest_checks": dict(self.latest_checks),
+            "age_hours": self.age_hours,
+            "next_due_at": self.next_due_at,
+            "due_in_hours": self.due_in_hours,
+            "blockers": list(self.blockers),
+        }
+
+
+@dataclass(slots=True)
+class LiveWorkloadProofValidationAnalyticsSummary:
+    generated_at: str
+    environment_name: str
+    status: str
+    severity: str
+    cadence_status: str
+    due_soon_age_hours: float
+    warning_age_hours: float
+    critical_age_hours: float
+    latest_proof_event_id: str | None = None
+    latest_proof_recorded_at: str | None = None
+    latest_proof_changed_by: str | None = None
+    latest_proof_status: str | None = None
+    latest_trace_path: str | None = None
+    latest_snapshot_id: str | None = None
+    latest_audit_id: str | None = None
+    latest_alert_count: int | None = None
+    latest_event_count: int | None = None
+    latest_unexpected_targets: list[str] = field(default_factory=list)
+    latest_impacted_functions: list[str] = field(default_factory=list)
+    age_hours: float | None = None
+    next_due_at: str | None = None
+    due_in_hours: float | None = None
+    blockers: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "generated_at": self.generated_at,
+            "environment_name": self.environment_name,
+            "status": self.status,
+            "severity": self.severity,
+            "cadence_status": self.cadence_status,
+            "due_soon_age_hours": self.due_soon_age_hours,
+            "warning_age_hours": self.warning_age_hours,
+            "critical_age_hours": self.critical_age_hours,
+            "latest_proof_event_id": self.latest_proof_event_id,
+            "latest_proof_recorded_at": self.latest_proof_recorded_at,
+            "latest_proof_changed_by": self.latest_proof_changed_by,
+            "latest_proof_status": self.latest_proof_status,
+            "latest_trace_path": self.latest_trace_path,
+            "latest_snapshot_id": self.latest_snapshot_id,
+            "latest_audit_id": self.latest_audit_id,
+            "latest_alert_count": self.latest_alert_count,
+            "latest_event_count": self.latest_event_count,
+            "latest_unexpected_targets": list(self.latest_unexpected_targets),
+            "latest_impacted_functions": list(self.latest_impacted_functions),
+            "age_hours": self.age_hours,
+            "next_due_at": self.next_due_at,
+            "due_in_hours": self.due_in_hours,
+            "blockers": list(self.blockers),
+        }
+
+
+@dataclass(slots=True)
+class BackupExportValidationAnalyticsSummary:
+    generated_at: str
+    environment_name: str
+    status: str
+    severity: str
+    latest_export_event_id: str | None = None
+    latest_exported_at: str | None = None
+    latest_export_changed_by: str | None = None
+    latest_export_path: str | None = None
+    age_hours: float | None = None
+    warning_age_hours: float = 48.0
+    critical_age_hours: float = 168.0
+    blockers: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "generated_at": self.generated_at,
+            "environment_name": self.environment_name,
+            "status": self.status,
+            "severity": self.severity,
+            "latest_export_event_id": self.latest_export_event_id,
+            "latest_exported_at": self.latest_exported_at,
+            "latest_export_changed_by": self.latest_export_changed_by,
+            "latest_export_path": self.latest_export_path,
+            "age_hours": self.age_hours,
+            "warning_age_hours": self.warning_age_hours,
+            "critical_age_hours": self.critical_age_hours,
+            "blockers": list(self.blockers),
+        }
+
+
+@dataclass(slots=True)
+class ObservabilityExportValidationAnalyticsSummary:
+    generated_at: str
+    organization_name: str
+    environment_name: str
+    status: str
+    severity: str
+    latest_export_event_id: str | None = None
+    latest_exported_at: str | None = None
+    latest_export_changed_by: str | None = None
+    latest_export_path: str | None = None
+    age_hours: float | None = None
+    warning_age_hours: float = 24.0
+    critical_age_hours: float = 72.0
+    blockers: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "generated_at": self.generated_at,
+            "organization_name": self.organization_name,
+            "environment_name": self.environment_name,
+            "status": self.status,
+            "severity": self.severity,
+            "latest_export_event_id": self.latest_export_event_id,
+            "latest_exported_at": self.latest_exported_at,
+            "latest_export_changed_by": self.latest_export_changed_by,
+            "latest_export_path": self.latest_export_path,
+            "age_hours": self.age_hours,
+            "warning_age_hours": self.warning_age_hours,
+            "critical_age_hours": self.critical_age_hours,
             "blockers": list(self.blockers),
         }
 
@@ -398,6 +569,36 @@ class DeploymentReadinessAnalyticsSummary:
 
 
 @dataclass(slots=True)
+class PrivilegedApiAuditAnalyticsSummary:
+    generated_at: str
+    window_hours: float
+    total_entries: int
+    recent_entries: int
+    non_ok_recent_entries: int
+    denied_recent_entries: int
+    blocked_recent_entries: int
+    rejected_recent_entries: int
+    top_actions: list[dict] = field(default_factory=list)
+    top_roles: list[dict] = field(default_factory=list)
+    sample_non_ok_entries: list[dict] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {
+            "generated_at": self.generated_at,
+            "window_hours": self.window_hours,
+            "total_entries": self.total_entries,
+            "recent_entries": self.recent_entries,
+            "non_ok_recent_entries": self.non_ok_recent_entries,
+            "denied_recent_entries": self.denied_recent_entries,
+            "blocked_recent_entries": self.blocked_recent_entries,
+            "rejected_recent_entries": self.rejected_recent_entries,
+            "top_actions": [dict(item) for item in self.top_actions],
+            "top_roles": [dict(item) for item in self.top_roles],
+            "sample_non_ok_entries": [dict(item) for item in self.sample_non_ok_entries],
+        }
+
+
+@dataclass(slots=True)
 class ControlPlaneAlertThresholds:
     queue_warning_threshold: int = 5
     queue_critical_threshold: int = 20
@@ -418,6 +619,21 @@ class ControlPlaneAlertThresholds:
     runtime_rehearsal_due_soon_age_hours: float = 18.0
     runtime_rehearsal_warning_age_hours: float = 24.0
     runtime_rehearsal_critical_age_hours: float = 72.0
+    live_workload_proof_due_soon_age_hours: float = 24.0
+    live_workload_proof_warning_age_hours: float = 72.0
+    live_workload_proof_critical_age_hours: float = 168.0
+    live_workload_target_validation_due_soon_age_hours: float = 18.0
+    live_workload_target_validation_warning_age_hours: float = 24.0
+    live_workload_target_validation_critical_age_hours: float = 72.0
+    backup_rehearsal_due_soon_age_hours: float = 72.0
+    backup_rehearsal_warning_age_hours: float = 168.0
+    backup_rehearsal_critical_age_hours: float = 336.0
+    backup_export_warning_age_hours: float = 48.0
+    backup_export_critical_age_hours: float = 168.0
+    observability_export_warning_age_hours: float = 24.0
+    observability_export_critical_age_hours: float = 72.0
+    privileged_api_audit_non_ok_warning_threshold: int = 1
+    privileged_api_audit_non_ok_critical_threshold: int = 3
 
     def to_dict(self) -> dict:
         return {
@@ -440,6 +656,21 @@ class ControlPlaneAlertThresholds:
             "runtime_rehearsal_due_soon_age_hours": self.runtime_rehearsal_due_soon_age_hours,
             "runtime_rehearsal_warning_age_hours": self.runtime_rehearsal_warning_age_hours,
             "runtime_rehearsal_critical_age_hours": self.runtime_rehearsal_critical_age_hours,
+            "live_workload_proof_due_soon_age_hours": self.live_workload_proof_due_soon_age_hours,
+            "live_workload_proof_warning_age_hours": self.live_workload_proof_warning_age_hours,
+            "live_workload_proof_critical_age_hours": self.live_workload_proof_critical_age_hours,
+            "live_workload_target_validation_due_soon_age_hours": self.live_workload_target_validation_due_soon_age_hours,
+            "live_workload_target_validation_warning_age_hours": self.live_workload_target_validation_warning_age_hours,
+            "live_workload_target_validation_critical_age_hours": self.live_workload_target_validation_critical_age_hours,
+            "backup_rehearsal_due_soon_age_hours": self.backup_rehearsal_due_soon_age_hours,
+            "backup_rehearsal_warning_age_hours": self.backup_rehearsal_warning_age_hours,
+            "backup_rehearsal_critical_age_hours": self.backup_rehearsal_critical_age_hours,
+            "backup_export_warning_age_hours": self.backup_export_warning_age_hours,
+            "backup_export_critical_age_hours": self.backup_export_critical_age_hours,
+            "observability_export_warning_age_hours": self.observability_export_warning_age_hours,
+            "observability_export_critical_age_hours": self.observability_export_critical_age_hours,
+            "privileged_api_audit_non_ok_warning_threshold": self.privileged_api_audit_non_ok_warning_threshold,
+            "privileged_api_audit_non_ok_critical_threshold": self.privileged_api_audit_non_ok_critical_threshold,
         }
 
 
@@ -491,8 +722,14 @@ class ControlPlaneAnalyticsReport:
     jobs: JobAnalyticsSummary
     oncall: OnCallAnalyticsSummary
     runtime_validation: RuntimeValidationAnalyticsSummary
+    live_workload_target_validation: ControlPlaneLiveWorkloadTargetValidationSummary
+    live_workload_proof_validation: LiveWorkloadProofValidationAnalyticsSummary
+    backup_validation: BackupValidationAnalyticsSummary
+    backup_export_validation: BackupExportValidationAnalyticsSummary
+    observability_export_validation: ObservabilityExportValidationAnalyticsSummary
     deployment_readiness: DeploymentReadinessAnalyticsSummary
     runtime_validation_reviews: RuntimeValidationReviewAnalyticsSummary
+    privileged_api_audit: PrivilegedApiAuditAnalyticsSummary
     evaluation: ControlPlaneEvaluation
 
     def to_dict(self) -> dict:
@@ -507,8 +744,14 @@ class ControlPlaneAnalyticsReport:
             "jobs": self.jobs.to_dict(),
             "oncall": self.oncall.to_dict(),
             "runtime_validation": self.runtime_validation.to_dict(),
+            "live_workload_target_validation": self.live_workload_target_validation.to_dict(),
+            "live_workload_proof_validation": self.live_workload_proof_validation.to_dict(),
+            "backup_validation": self.backup_validation.to_dict(),
+            "backup_export_validation": self.backup_export_validation.to_dict(),
+            "observability_export_validation": self.observability_export_validation.to_dict(),
             "deployment_readiness": self.deployment_readiness.to_dict(),
             "runtime_validation_reviews": self.runtime_validation_reviews.to_dict(),
+            "privileged_api_audit": self.privileged_api_audit.to_dict(),
             "evaluation": self.evaluation.to_dict(),
         }
 
@@ -523,6 +766,7 @@ class AnalyticsService:
     runtime_validation_reminder_interval_seconds: float = 900.0
     runtime_validation_escalation_interval_seconds: float = 1800.0
     deployment_readiness_service: object | None = None
+    privileged_api_audit_service: PrivilegedApiAuditService | None = None
 
     def build_control_plane_analytics(
         self,
@@ -576,10 +820,37 @@ class AnalyticsService:
             warning_age_hours=effective_thresholds.runtime_rehearsal_warning_age_hours,
             critical_age_hours=effective_thresholds.runtime_rehearsal_critical_age_hours,
         )
+        live_workload_target_validation_summary = self._build_live_workload_target_validation_summary(
+            due_soon_age_hours=effective_thresholds.live_workload_target_validation_due_soon_age_hours,
+            warning_age_hours=effective_thresholds.live_workload_target_validation_warning_age_hours,
+            critical_age_hours=effective_thresholds.live_workload_target_validation_critical_age_hours,
+        )
+        live_workload_proof_validation_summary = self._build_live_workload_proof_validation_summary(
+            due_soon_age_hours=effective_thresholds.live_workload_proof_due_soon_age_hours,
+            warning_age_hours=effective_thresholds.live_workload_proof_warning_age_hours,
+            critical_age_hours=effective_thresholds.live_workload_proof_critical_age_hours,
+        )
+        backup_validation_summary = self._build_backup_validation_summary(
+            due_soon_age_hours=effective_thresholds.backup_rehearsal_due_soon_age_hours,
+            warning_age_hours=effective_thresholds.backup_rehearsal_warning_age_hours,
+            critical_age_hours=effective_thresholds.backup_rehearsal_critical_age_hours,
+        )
+        backup_export_validation_summary = self._build_backup_export_validation_summary(
+            warning_age_hours=effective_thresholds.backup_export_warning_age_hours,
+            critical_age_hours=effective_thresholds.backup_export_critical_age_hours,
+        )
+        observability_export_validation_summary = self._build_observability_export_validation_summary(
+            warning_age_hours=effective_thresholds.observability_export_warning_age_hours,
+            critical_age_hours=effective_thresholds.observability_export_critical_age_hours,
+        )
         deployment_readiness_summary = self._build_deployment_readiness_summary(
-            runtime_validation=runtime_validation_summary
+            runtime_validation=runtime_validation_summary,
+            live_workload_target_validation=live_workload_target_validation_summary,
+            live_workload_proof_validation=live_workload_proof_validation_summary,
+            backup_validation=backup_validation_summary,
         )
         runtime_validation_review_summary = self._build_runtime_validation_review_summary(now=now)
+        privileged_api_audit_summary = self._build_privileged_api_audit_summary()
         evaluation = self._build_evaluation(
             queue=queue,
             workers=worker_summary,
@@ -587,8 +858,14 @@ class AnalyticsService:
             jobs=job_summary,
             oncall=oncall_summary,
             runtime_validation=runtime_validation_summary,
+            live_workload_target_validation=live_workload_target_validation_summary,
+            live_workload_proof_validation=live_workload_proof_validation_summary,
+            backup_validation=backup_validation_summary,
+            backup_export_validation=backup_export_validation_summary,
+            observability_export_validation=observability_export_validation_summary,
             deployment_readiness=deployment_readiness_summary,
             runtime_validation_reviews=runtime_validation_review_summary,
+            privileged_api_audit=privileged_api_audit_summary,
             thresholds=effective_thresholds,
         )
 
@@ -603,8 +880,14 @@ class AnalyticsService:
             jobs=job_summary,
             oncall=oncall_summary,
             runtime_validation=runtime_validation_summary,
+            live_workload_target_validation=live_workload_target_validation_summary,
+            live_workload_proof_validation=live_workload_proof_validation_summary,
+            backup_validation=backup_validation_summary,
+            backup_export_validation=backup_export_validation_summary,
+            observability_export_validation=observability_export_validation_summary,
             deployment_readiness=deployment_readiness_summary,
             runtime_validation_reviews=runtime_validation_review_summary,
+            privileged_api_audit=privileged_api_audit_summary,
             evaluation=evaluation,
         )
 
@@ -636,6 +919,25 @@ class AnalyticsService:
         payload["runtime_rehearsal_critical_age_hours"] = (
             runtime_policy.critical_age_hours or effective.runtime_rehearsal_critical_age_hours
         )
+        payload["live_workload_proof_due_soon_age_hours"] = effective.live_workload_proof_due_soon_age_hours
+        payload["live_workload_proof_warning_age_hours"] = effective.live_workload_proof_warning_age_hours
+        payload["live_workload_proof_critical_age_hours"] = effective.live_workload_proof_critical_age_hours
+        payload["live_workload_target_validation_due_soon_age_hours"] = (
+            effective.live_workload_target_validation_due_soon_age_hours
+        )
+        payload["live_workload_target_validation_warning_age_hours"] = (
+            effective.live_workload_target_validation_warning_age_hours
+        )
+        payload["live_workload_target_validation_critical_age_hours"] = (
+            effective.live_workload_target_validation_critical_age_hours
+        )
+        payload["backup_rehearsal_due_soon_age_hours"] = effective.backup_rehearsal_due_soon_age_hours
+        payload["backup_rehearsal_warning_age_hours"] = effective.backup_rehearsal_warning_age_hours
+        payload["backup_rehearsal_critical_age_hours"] = effective.backup_rehearsal_critical_age_hours
+        payload["backup_export_warning_age_hours"] = effective.backup_export_warning_age_hours
+        payload["backup_export_critical_age_hours"] = effective.backup_export_critical_age_hours
+        payload["observability_export_warning_age_hours"] = effective.observability_export_warning_age_hours
+        payload["observability_export_critical_age_hours"] = effective.observability_export_critical_age_hours
         return ControlPlaneAlertThresholds(**payload)
 
     def _build_runtime_validation_summary(
@@ -683,10 +985,7 @@ class AnalyticsService:
             latest_rehearsal_changed_by=summary.latest_rehearsal_changed_by,
             latest_rehearsal_status=summary.latest_rehearsal_status,
             latest_expected_backend=summary.latest_expected_backend,
-            latest_expected_repository_layout=summary.latest_expected_repository_layout,
             latest_database_backend=summary.latest_database_backend,
-            latest_repository_layout=summary.latest_repository_layout,
-            latest_mixed_backends=summary.latest_mixed_backends,
             latest_checks={} if summary.latest_checks is None else dict(summary.latest_checks),
             age_hours=summary.age_hours,
             next_due_at=summary.next_due_at,
@@ -694,10 +993,169 @@ class AnalyticsService:
             blockers=[] if summary.blockers is None else list(summary.blockers),
         )
 
+    def _build_backup_validation_summary(
+        self,
+        *,
+        due_soon_age_hours: float,
+        warning_age_hours: float,
+        critical_age_hours: float,
+    ) -> BackupValidationAnalyticsSummary:
+        summary = ControlPlaneBackupValidationService(
+            job_repository=self.job_repository,
+            environment_name=self.default_environment_name,
+            due_soon_age_hours=due_soon_age_hours,
+            warning_age_hours=warning_age_hours,
+            critical_age_hours=critical_age_hours,
+        ).build_summary()
+        return BackupValidationAnalyticsSummary(
+            generated_at=summary.generated_at,
+            environment_name=summary.environment_name,
+            status=summary.status,
+            severity=summary.severity,
+            cadence_status=summary.cadence_status,
+            due_soon_age_hours=summary.due_soon_age_hours,
+            warning_age_hours=summary.warning_age_hours,
+            critical_age_hours=summary.critical_age_hours,
+            latest_rehearsal_event_id=summary.latest_rehearsal_event_id,
+            latest_rehearsal_recorded_at=summary.latest_rehearsal_recorded_at,
+            latest_rehearsal_changed_by=summary.latest_rehearsal_changed_by,
+            latest_rehearsal_status=summary.latest_rehearsal_status,
+            latest_checks={} if summary.latest_checks is None else dict(summary.latest_checks),
+            age_hours=summary.age_hours,
+            next_due_at=summary.next_due_at,
+            due_in_hours=summary.due_in_hours,
+            blockers=[] if summary.blockers is None else list(summary.blockers),
+        )
+
+    def _build_live_workload_proof_validation_summary(
+        self,
+        *,
+        due_soon_age_hours: float,
+        warning_age_hours: float,
+        critical_age_hours: float,
+    ) -> LiveWorkloadProofValidationAnalyticsSummary:
+        summary = ControlPlaneLiveWorkloadProofValidationService(
+            job_repository=self.job_repository,
+            environment_name=self.default_environment_name,
+            due_soon_age_hours=due_soon_age_hours,
+            warning_age_hours=warning_age_hours,
+            critical_age_hours=critical_age_hours,
+        ).build_summary()
+        return LiveWorkloadProofValidationAnalyticsSummary(
+            generated_at=summary.generated_at,
+            environment_name=summary.environment_name,
+            status=summary.status,
+            severity=summary.severity,
+            cadence_status=summary.cadence_status,
+            due_soon_age_hours=summary.due_soon_age_hours,
+            warning_age_hours=summary.warning_age_hours,
+            critical_age_hours=summary.critical_age_hours,
+            latest_proof_event_id=summary.latest_proof_event_id,
+            latest_proof_recorded_at=summary.latest_proof_recorded_at,
+            latest_proof_changed_by=summary.latest_proof_changed_by,
+            latest_proof_status=summary.latest_proof_status,
+            latest_trace_path=summary.latest_trace_path,
+            latest_snapshot_id=summary.latest_snapshot_id,
+            latest_audit_id=summary.latest_audit_id,
+            latest_alert_count=summary.latest_alert_count,
+            latest_event_count=summary.latest_event_count,
+            latest_unexpected_targets=[] if summary.latest_unexpected_targets is None else list(summary.latest_unexpected_targets),
+            latest_impacted_functions=[] if summary.latest_impacted_functions is None else list(summary.latest_impacted_functions),
+            age_hours=summary.age_hours,
+            next_due_at=summary.next_due_at,
+            due_in_hours=summary.due_in_hours,
+            blockers=[] if summary.blockers is None else list(summary.blockers),
+        )
+
+    def _build_backup_export_validation_summary(
+        self,
+        *,
+        warning_age_hours: float,
+        critical_age_hours: float,
+    ) -> BackupExportValidationAnalyticsSummary:
+        summary = ControlPlaneBackupOperationsService(
+            settings=type(
+                "BackupOpsSettings",
+                (),
+                {
+                    "control_plane_backups_dir": getattr(self.job_repository.settings, "control_plane_backups_dir"),
+                    "backup_bundle_retention_days": getattr(self.job_repository.settings, "backup_bundle_retention_days"),
+                    "backup_export_interval_seconds": getattr(self.job_repository.settings, "backup_export_interval_seconds"),
+                    "analytics_backup_export_warning_age_hours": warning_age_hours,
+                    "analytics_backup_export_critical_age_hours": critical_age_hours,
+                    "environment_name": self.default_environment_name,
+                },
+            )(),
+            backup_service=None,  # unused for validation path
+            job_repository=self.job_repository,
+            job_service=None,
+        ).latest_backup_export_validation()
+        return BackupExportValidationAnalyticsSummary(
+            generated_at=summary.generated_at,
+            environment_name=summary.environment_name,
+            status=summary.status,
+            severity=summary.severity,
+            latest_export_event_id=summary.latest_export_event_id,
+            latest_exported_at=summary.latest_exported_at,
+            latest_export_changed_by=summary.latest_export_changed_by,
+            latest_export_path=summary.latest_export_path,
+            age_hours=summary.age_hours,
+            warning_age_hours=summary.warning_age_hours,
+            critical_age_hours=summary.critical_age_hours,
+            blockers=[] if summary.blockers is None else list(summary.blockers),
+        )
+
+    def _build_observability_export_validation_summary(
+        self,
+        *,
+        warning_age_hours: float,
+        critical_age_hours: float,
+    ) -> ObservabilityExportValidationAnalyticsSummary:
+        summary = ControlPlaneObservabilityExportService(
+            settings=type(
+                "ObservabilityExportSettings",
+                (),
+                {
+                    "organization_name": getattr(self.job_repository.settings, "organization_name"),
+                    "environment_name": self.default_environment_name,
+                    "control_plane_observability_dir": getattr(
+                        self.job_repository.settings, "control_plane_observability_dir"
+                    ),
+                    "observability_export_retention_days": getattr(
+                        self.job_repository.settings, "observability_export_retention_days"
+                    ),
+                    "analytics_observability_export_warning_age_hours": warning_age_hours,
+                    "analytics_observability_export_critical_age_hours": critical_age_hours,
+                },
+            )(),
+            job_service=self.job_repository,
+            analytics_service=None,
+            metrics_service=None,
+            privileged_api_audit_service=None,
+        ).latest_export_validation()
+        return ObservabilityExportValidationAnalyticsSummary(
+            generated_at=summary.generated_at,
+            organization_name=summary.organization_name,
+            environment_name=summary.environment_name,
+            status=summary.status,
+            severity=summary.severity,
+            latest_export_event_id=summary.latest_export_event_id,
+            latest_exported_at=summary.latest_exported_at,
+            latest_export_changed_by=summary.latest_export_changed_by,
+            latest_export_path=summary.latest_export_path,
+            age_hours=summary.age_hours,
+            warning_age_hours=summary.warning_age_hours,
+            critical_age_hours=summary.critical_age_hours,
+            blockers=[] if summary.blockers is None else list(summary.blockers),
+        )
+
     def _build_deployment_readiness_summary(
         self,
         *,
         runtime_validation: RuntimeValidationAnalyticsSummary,
+        live_workload_target_validation: ControlPlaneLiveWorkloadTargetValidationSummary,
+        live_workload_proof_validation: LiveWorkloadProofValidationAnalyticsSummary,
+        backup_validation: BackupValidationAnalyticsSummary,
     ) -> DeploymentReadinessAnalyticsSummary:
         if self.deployment_readiness_service is not None:
             summary = self.deployment_readiness_service.evaluate()
@@ -705,6 +1163,12 @@ class AnalyticsService:
         blockers = []
         if runtime_validation.status != "passed":
             blockers.append(f"runtime_validation_{runtime_validation.status}")
+        if live_workload_target_validation.status != "passed":
+            blockers.append(f"live_workload_target_validation_{live_workload_target_validation.status}")
+        if live_workload_proof_validation.status != "passed":
+            blockers.append(f"live_workload_proof_validation_{live_workload_proof_validation.status}")
+        if backup_validation.status != "passed":
+            blockers.append(f"backup_validation_{backup_validation.status}")
         warnings = []
         maintenance_mode = self.job_repository.maintenance_mode_status()
         if maintenance_mode["active"]:
@@ -723,6 +1187,32 @@ class AnalyticsService:
             blockers=blockers,
             warnings=warnings,
         )
+
+    def _build_live_workload_target_validation_summary(
+        self,
+        *,
+        due_soon_age_hours: float,
+        warning_age_hours: float,
+        critical_age_hours: float,
+    ) -> ControlPlaneLiveWorkloadTargetValidationSummary:
+        return ControlPlaneLiveWorkloadTargetValidationService(
+            settings=type(
+                "_TargetSettings",
+                (),
+                {
+                    "environment_name": self.default_environment_name,
+                    "analytics_live_workload_target_validation_due_soon_age_hours": due_soon_age_hours,
+                    "analytics_live_workload_target_validation_warning_age_hours": warning_age_hours,
+                    "analytics_live_workload_target_validation_critical_age_hours": critical_age_hours,
+                    "workload_proof_target_profile": "embedded",
+                    "workload_proof_approved_base_url": None,
+                    "workload_proof_drift_base_url": None,
+                },
+            )(),
+            job_repository=self.job_repository,
+            job_service=None,
+            live_workload_drift_proof_service=None,
+        ).build_summary()
 
     def _deployment_readiness_analytics_from_summary(
         self,
@@ -887,7 +1377,7 @@ class AnalyticsService:
         stale_workers = 0
 
         for record in workers:
-            last_seen = datetime.fromisoformat(record.last_heartbeat_at)
+            last_seen = parse_datetime_value(record.last_heartbeat_at) or (now - timedelta(days=3650))
             if last_seen >= threshold:
                 active_workers += 1
                 if record.current_job_id:
@@ -1154,7 +1644,7 @@ class AnalyticsService:
         pending_review_ages = [
             (
                 record,
-                max(0.0, (now - datetime.fromisoformat(record.created_at)).total_seconds() / 3600.0),
+                max(0.0, (now - (parse_datetime_value(record.created_at) or now)).total_seconds() / 3600.0),
             )
             for record in pending_reviews
         ]
@@ -1199,8 +1689,14 @@ class AnalyticsService:
         jobs: JobAnalyticsSummary,
         oncall: OnCallAnalyticsSummary,
         runtime_validation: RuntimeValidationAnalyticsSummary,
+        live_workload_target_validation: ControlPlaneLiveWorkloadTargetValidationSummary,
+        live_workload_proof_validation: LiveWorkloadProofValidationAnalyticsSummary,
+        backup_validation: BackupValidationAnalyticsSummary,
+        backup_export_validation: BackupExportValidationAnalyticsSummary,
+        observability_export_validation: ObservabilityExportValidationAnalyticsSummary,
         deployment_readiness: DeploymentReadinessAnalyticsSummary,
         runtime_validation_reviews: RuntimeValidationReviewAnalyticsSummary,
+        privileged_api_audit: PrivilegedApiAuditAnalyticsSummary,
         thresholds: ControlPlaneAlertThresholds,
     ) -> ControlPlaneEvaluation:
         findings: list[ControlPlaneFinding] = []
@@ -1360,7 +1856,251 @@ class AnalyticsService:
                         "latest_rehearsal_event_id": runtime_validation.latest_rehearsal_event_id,
                         "latest_rehearsal_recorded_at": runtime_validation.latest_rehearsal_recorded_at,
                         "latest_expected_backend": runtime_validation.latest_expected_backend,
-                        "latest_repository_layout": runtime_validation.latest_repository_layout,
+                    },
+                )
+            )
+
+        if live_workload_target_validation.status == "missing":
+            findings.append(
+                ControlPlaneFinding(
+                    severity="critical",
+                    code="live_workload_target_validation_missing",
+                    metric="live_workload_target_validation.latest_validation_recorded_at",
+                    summary="No live workload target validation evidence exists for the active environment.",
+                    observed_value=0.0,
+                    threshold_value=1.0,
+                    context={"environment_name": self.default_environment_name},
+                )
+            )
+        elif live_workload_target_validation.status in {"failed", "warning", "critical"}:
+            findings.append(
+                ControlPlaneFinding(
+                    severity="critical" if live_workload_target_validation.status in {"failed", "critical"} else "warning",
+                    code=f"live_workload_target_validation_{live_workload_target_validation.status}",
+                    metric="live_workload_target_validation.status",
+                    summary="Live workload target validation is not healthy.",
+                    observed_value=0.0,
+                    threshold_value=1.0,
+                    context={
+                        "latest_validation_event_id": live_workload_target_validation.latest_validation_event_id,
+                        "target_profile": live_workload_target_validation.target_profile,
+                        "blockers": live_workload_target_validation.blockers,
+                    },
+                )
+            )
+        elif (
+            live_workload_target_validation.cadence_status == "due_soon"
+            and live_workload_target_validation.age_hours is not None
+        ):
+            findings.append(
+                ControlPlaneFinding(
+                    severity="warning",
+                    code="live_workload_target_validation_due_soon",
+                    metric="live_workload_target_validation.age_hours",
+                    summary="Live workload target validation is approaching its warning threshold.",
+                    observed_value=live_workload_target_validation.age_hours,
+                    threshold_value=thresholds.live_workload_target_validation_warning_age_hours,
+                    context={
+                        "due_soon_age_hours": thresholds.live_workload_target_validation_due_soon_age_hours,
+                        "latest_validation_event_id": live_workload_target_validation.latest_validation_event_id,
+                        "latest_validation_recorded_at": live_workload_target_validation.latest_validation_recorded_at,
+                        "next_due_at": live_workload_target_validation.next_due_at,
+                        "target_profile": live_workload_target_validation.target_profile,
+                    },
+                )
+            )
+
+        if live_workload_proof_validation.status == "missing":
+            findings.append(
+                ControlPlaneFinding(
+                    severity="critical",
+                    code="live_workload_drift_proof_missing",
+                    metric="live_workload_proof_validation.latest_proof_recorded_at",
+                    summary="No live workload drift-proof evidence exists for the active environment.",
+                    observed_value=0.0,
+                    threshold_value=1.0,
+                    context={"environment_name": self.default_environment_name},
+                )
+            )
+        elif live_workload_proof_validation.status == "failed":
+            findings.append(
+                ControlPlaneFinding(
+                    severity="critical",
+                    code="live_workload_drift_proof_failed",
+                    metric="live_workload_proof_validation.latest_proof_status",
+                    summary="The latest live workload drift proof did not pass.",
+                    observed_value=0.0,
+                    threshold_value=1.0,
+                    context={
+                        "latest_proof_event_id": live_workload_proof_validation.latest_proof_event_id,
+                        "latest_proof_status": live_workload_proof_validation.latest_proof_status,
+                        "latest_unexpected_targets": live_workload_proof_validation.latest_unexpected_targets,
+                        "latest_impacted_functions": live_workload_proof_validation.latest_impacted_functions,
+                    },
+                )
+            )
+        elif (
+            live_workload_proof_validation.cadence_status == "due_soon"
+            and live_workload_proof_validation.age_hours is not None
+        ):
+            findings.append(
+                ControlPlaneFinding(
+                    severity="warning",
+                    code="live_workload_drift_proof_due_soon",
+                    metric="live_workload_proof_validation.due_in_hours",
+                    summary="The latest live workload drift proof is approaching its warning threshold.",
+                    observed_value=live_workload_proof_validation.age_hours,
+                    threshold_value=thresholds.live_workload_proof_warning_age_hours,
+                    context={
+                        "due_soon_age_hours": thresholds.live_workload_proof_due_soon_age_hours,
+                        "latest_proof_event_id": live_workload_proof_validation.latest_proof_event_id,
+                        "latest_proof_recorded_at": live_workload_proof_validation.latest_proof_recorded_at,
+                        "next_due_at": live_workload_proof_validation.next_due_at,
+                        "due_in_hours": live_workload_proof_validation.due_in_hours,
+                    },
+                )
+            )
+        elif live_workload_proof_validation.age_hours is not None:
+            findings.extend(
+                self._threshold_findings(
+                    observed_value=live_workload_proof_validation.age_hours,
+                    warning_threshold=thresholds.live_workload_proof_warning_age_hours,
+                    critical_threshold=thresholds.live_workload_proof_critical_age_hours,
+                    code="live_workload_drift_proof_age",
+                    metric="live_workload_proof_validation.age_hours",
+                    warning_summary="The latest live workload drift proof is older than the configured warning threshold.",
+                    critical_summary="The latest live workload drift proof is older than the configured critical threshold.",
+                    context={
+                        "latest_proof_event_id": live_workload_proof_validation.latest_proof_event_id,
+                        "latest_proof_recorded_at": live_workload_proof_validation.latest_proof_recorded_at,
+                        "latest_trace_path": live_workload_proof_validation.latest_trace_path,
+                    },
+                )
+            )
+
+        if backup_validation.status == "missing":
+            findings.append(
+                ControlPlaneFinding(
+                    severity="critical",
+                    code="backup_rehearsal_missing",
+                    metric="backup_validation.latest_rehearsal_recorded_at",
+                    summary="No control-plane backup rehearsal evidence exists for the active environment.",
+                    observed_value=0.0,
+                    threshold_value=1.0,
+                    context={"environment_name": self.default_environment_name},
+                )
+            )
+        elif backup_validation.status == "failed":
+            findings.append(
+                ControlPlaneFinding(
+                    severity="critical",
+                    code="backup_rehearsal_failed",
+                    metric="backup_validation.latest_rehearsal_status",
+                    summary="The latest control-plane backup rehearsal did not pass.",
+                    observed_value=0.0,
+                    threshold_value=1.0,
+                    context={
+                        "latest_rehearsal_event_id": backup_validation.latest_rehearsal_event_id,
+                        "latest_rehearsal_status": backup_validation.latest_rehearsal_status,
+                        "latest_checks": backup_validation.latest_checks,
+                    },
+                )
+            )
+        elif backup_validation.cadence_status == "due_soon" and backup_validation.age_hours is not None:
+            findings.append(
+                ControlPlaneFinding(
+                    severity="warning",
+                    code="backup_rehearsal_due_soon",
+                    metric="backup_validation.due_in_hours",
+                    summary="The latest control-plane backup rehearsal is approaching its warning threshold.",
+                    observed_value=backup_validation.age_hours,
+                    threshold_value=thresholds.backup_rehearsal_warning_age_hours,
+                    context={
+                        "due_soon_age_hours": thresholds.backup_rehearsal_due_soon_age_hours,
+                        "latest_rehearsal_event_id": backup_validation.latest_rehearsal_event_id,
+                        "latest_rehearsal_recorded_at": backup_validation.latest_rehearsal_recorded_at,
+                        "next_due_at": backup_validation.next_due_at,
+                        "due_in_hours": backup_validation.due_in_hours,
+                    },
+                )
+            )
+        elif backup_validation.age_hours is not None:
+            findings.extend(
+                self._threshold_findings(
+                    observed_value=backup_validation.age_hours,
+                    warning_threshold=thresholds.backup_rehearsal_warning_age_hours,
+                    critical_threshold=thresholds.backup_rehearsal_critical_age_hours,
+                    code="backup_rehearsal_age",
+                    metric="backup_validation.age_hours",
+                    warning_summary="The latest control-plane backup rehearsal is older than the configured warning threshold.",
+                    critical_summary="The latest control-plane backup rehearsal is older than the configured critical threshold.",
+                    context={
+                        "latest_rehearsal_event_id": backup_validation.latest_rehearsal_event_id,
+                        "latest_rehearsal_recorded_at": backup_validation.latest_rehearsal_recorded_at,
+                    },
+                )
+            )
+
+        if backup_export_validation.status == "missing":
+            findings.append(
+                ControlPlaneFinding(
+                    severity="critical",
+                    code="backup_export_missing",
+                    metric="backup_export_validation.latest_exported_at",
+                    summary="No control-plane backup export evidence exists for the active environment.",
+                    observed_value=0.0,
+                    threshold_value=1.0,
+                    context={"environment_name": self.default_environment_name},
+                )
+            )
+        elif backup_export_validation.age_hours is not None:
+            findings.extend(
+                self._threshold_findings(
+                    observed_value=backup_export_validation.age_hours,
+                    warning_threshold=thresholds.backup_export_warning_age_hours,
+                    critical_threshold=thresholds.backup_export_critical_age_hours,
+                    code="backup_export_age",
+                    metric="backup_export_validation.age_hours",
+                    warning_summary="The latest control-plane backup export is older than the configured warning threshold.",
+                    critical_summary="The latest control-plane backup export is older than the configured critical threshold.",
+                    context={
+                        "latest_export_event_id": backup_export_validation.latest_export_event_id,
+                        "latest_exported_at": backup_export_validation.latest_exported_at,
+                        "latest_export_path": backup_export_validation.latest_export_path,
+                    },
+                )
+            )
+
+        if observability_export_validation.status == "missing":
+            findings.append(
+                ControlPlaneFinding(
+                    severity="critical",
+                    code="observability_export_missing",
+                    metric="observability_export_validation.latest_exported_at",
+                    summary="No control-plane observability export evidence exists for the active environment.",
+                    observed_value=0.0,
+                    threshold_value=1.0,
+                    context={
+                        "environment_name": self.default_environment_name,
+                        "organization_name": observability_export_validation.organization_name,
+                    },
+                )
+            )
+        elif observability_export_validation.age_hours is not None:
+            findings.extend(
+                self._threshold_findings(
+                    observed_value=observability_export_validation.age_hours,
+                    warning_threshold=thresholds.observability_export_warning_age_hours,
+                    critical_threshold=thresholds.observability_export_critical_age_hours,
+                    code="observability_export_age",
+                    metric="observability_export_validation.age_hours",
+                    warning_summary="The latest control-plane observability export is older than the configured warning threshold.",
+                    critical_summary="The latest control-plane observability export is older than the configured critical threshold.",
+                    context={
+                        "latest_export_event_id": observability_export_validation.latest_export_event_id,
+                        "latest_exported_at": observability_export_validation.latest_exported_at,
+                        "latest_export_path": observability_export_validation.latest_export_path,
+                        "organization_name": observability_export_validation.organization_name,
                     },
                 )
             )
@@ -1420,6 +2160,26 @@ class AnalyticsService:
                 )
             )
 
+        if privileged_api_audit.non_ok_recent_entries > 0:
+            findings.extend(
+                self._threshold_findings(
+                    observed_value=privileged_api_audit.non_ok_recent_entries,
+                    warning_threshold=thresholds.privileged_api_audit_non_ok_warning_threshold,
+                    critical_threshold=thresholds.privileged_api_audit_non_ok_critical_threshold,
+                    code="privileged_api_audit_non_ok",
+                    metric="privileged_api_audit.non_ok_recent_entries",
+                    warning_summary="Recent privileged API actions include non-ok outcomes.",
+                    critical_summary="Too many recent privileged API actions include non-ok outcomes.",
+                    context={
+                        "window_hours": privileged_api_audit.window_hours,
+                        "denied_recent_entries": privileged_api_audit.denied_recent_entries,
+                        "blocked_recent_entries": privileged_api_audit.blocked_recent_entries,
+                        "rejected_recent_entries": privileged_api_audit.rejected_recent_entries,
+                        "sample_non_ok_entries": privileged_api_audit.sample_non_ok_entries,
+                    },
+                )
+            )
+
         status = "healthy"
         if any(item.severity == "critical" for item in findings):
             status = "critical"
@@ -1431,6 +2191,21 @@ class AnalyticsService:
             findings=findings,
             thresholds=thresholds,
         )
+
+    def _build_privileged_api_audit_summary(self) -> PrivilegedApiAuditAnalyticsSummary:
+        if self.privileged_api_audit_service is None:
+            return PrivilegedApiAuditAnalyticsSummary(
+                generated_at=_utc_now().isoformat(),
+                window_hours=24.0,
+                total_entries=0,
+                recent_entries=0,
+                non_ok_recent_entries=0,
+                denied_recent_entries=0,
+                blocked_recent_entries=0,
+                rejected_recent_entries=0,
+            )
+        summary = self.privileged_api_audit_service.build_summary(window_hours=24.0)
+        return PrivilegedApiAuditAnalyticsSummary(**summary.to_dict())
 
     def _threshold_findings(
         self,

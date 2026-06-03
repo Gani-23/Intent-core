@@ -10,9 +10,10 @@ from lsa.drift.function_resolution import resolve_events
 from lsa.drift.models import AuditExplanation, DriftAlert, ObservedEvent, RemediationReport, TraceSessionSummary
 from lsa.drift.signal_processor import normalize_events
 from lsa.drift.session_summary import build_audit_explanation, find_relevant_session, summarize_sessions
-from lsa.remediation.llm_client import RuleBasedLLMClient
+from lsa.remediation.llm_client import RemediationClient
 from lsa.remediation.prompt_builder import build_prompt
 from lsa.remediation.report_writer import write_report
+from lsa.services.remediation_index_service import RemediationIndexService
 from lsa.settings import WorkspaceSettings
 from lsa.storage.files import AuditRepository, SnapshotRepository
 from lsa.storage.models import AuditRecord, SnapshotRecord
@@ -38,8 +39,9 @@ class AuditService:
         snapshot_repository: SnapshotRepository,
         audit_repository: AuditRepository,
         drift_comparator: DriftComparator,
-        remediation_client: RuleBasedLLMClient,
+        remediation_client: RemediationClient,
         settings: WorkspaceSettings,
+        remediation_index_service: RemediationIndexService | None = None,
     ) -> None:
         self.graph = graph
         self.snapshot_repository = snapshot_repository
@@ -47,6 +49,7 @@ class AuditService:
         self.drift_comparator = drift_comparator
         self.remediation_client = remediation_client
         self.settings = settings
+        self.remediation_index_service = remediation_index_service
 
     def audit(
         self,
@@ -86,7 +89,18 @@ class AuditService:
             prompt = build_prompt(function, alert, session=session)
             report = self.remediation_client.analyze(function, alert, prompt, session=session)
             reports.append(report)
-            report_paths.append(str(write_report(report, output_dir)))
+            report_path = str(write_report(report, output_dir))
+            report_paths.append(report_path)
+            if self.remediation_index_service is not None:
+                self.remediation_index_service.record_report(
+                    audit_id=effective_audit_id,
+                    snapshot_id=snapshot_record.snapshot_id if snapshot_record else None,
+                    snapshot_path=resolved_snapshot_path,
+                    report_path=report_path,
+                    report=report,
+                    remediation_provider=getattr(self.settings, "remediation_provider", "rule-based"),
+                    remediation_model=getattr(self.settings, "remediation_model", None),
+                )
 
         record = None
         if persist:

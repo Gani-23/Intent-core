@@ -13,6 +13,7 @@ RUN useradd --create-home --shell /usr/sbin/nologin lsa
 COPY pyproject.toml README.md /app/
 COPY lsa /app/lsa
 COPY ebpf /app/ebpf
+COPY frontend /app/frontend
 
 RUN pip install --upgrade pip && \
     if [ -n "$LSA_PIP_INSTALL_EXTRAS" ]; then \

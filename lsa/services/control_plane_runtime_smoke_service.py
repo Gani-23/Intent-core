@@ -6,7 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from lsa.core.models import IntentGraphSnapshot
-from lsa.storage.files import AuditRepository, JobRepository, SnapshotRepository
+from lsa.storage.files import AuditRepository, JobRecord, JobRepository, SnapshotRepository
 
 
 @dataclass(slots=True)
@@ -18,8 +18,6 @@ class ControlPlaneRuntimeSmokeSummary:
     snapshot_repository_backend: str
     audit_repository_backend: str
     job_repository_backend: str
-    repository_layout: str
-    mixed_backends: bool
     snapshot_id: str
     audit_id: str
     job_id: str
@@ -41,8 +39,6 @@ class ControlPlaneRuntimeSmokeSummary:
             "snapshot_repository_backend": self.snapshot_repository_backend,
             "audit_repository_backend": self.audit_repository_backend,
             "job_repository_backend": self.job_repository_backend,
-            "repository_layout": self.repository_layout,
-            "mixed_backends": self.mixed_backends,
             "snapshot_id": self.snapshot_id,
             "audit_id": self.audit_id,
             "job_id": self.job_id,
@@ -64,8 +60,6 @@ class ControlPlaneRuntimeSmokeService:
     audit_repository: AuditRepository
     job_repository: JobRepository
     job_service: Any
-    repository_layout: str
-    mixed_backends: bool
     now_factory: Any
 
     def run(
@@ -74,6 +68,7 @@ class ControlPlaneRuntimeSmokeService:
         changed_by: str,
         reason: str | None = None,
         cleanup: bool = True,
+        actor_details: dict | None = None,
     ) -> ControlPlaneRuntimeSmokeSummary:
         smoke_id = uuid4().hex[:12]
         snapshot_id = f"smoke-snapshot-{smoke_id}"
@@ -117,10 +112,16 @@ class ControlPlaneRuntimeSmokeService:
         )
         fetched_audit = self.audit_repository.get(audit_id)
 
-        job_record = self.job_repository.create(
-            job_type="runtime-smoke",
-            request_payload={"smoke_id": smoke_id},
-            job_id=job_id,
+        job_record = self.job_repository.save(
+            JobRecord(
+                job_id=job_id,
+                created_at=executed_at,
+                job_type="runtime-smoke",
+                status="completed",
+                request_payload={"smoke_id": smoke_id},
+                result_payload={"smoke_id": smoke_id, "status": "completed"},
+                completed_at=executed_at,
+            )
         )
         fetched_job = self.job_repository.get(job_id)
 
@@ -132,8 +133,6 @@ class ControlPlaneRuntimeSmokeService:
             snapshot_repository_backend=str(self.snapshot_repository.database.config.backend),
             audit_repository_backend=str(self.audit_repository.database.config.backend),
             job_repository_backend=str(self.job_repository.database.config.backend),
-            repository_layout=self.repository_layout,
-            mixed_backends=self.mixed_backends,
             snapshot_id=snapshot_id,
             audit_id=audit_id,
             job_id=job_id,
@@ -155,6 +154,7 @@ class ControlPlaneRuntimeSmokeService:
             changed_by=changed_by,
             reason=reason,
             details=summary.to_dict(),
+            actor_details=actor_details,
         )
         summary.maintenance_event_id = event.event_id
 

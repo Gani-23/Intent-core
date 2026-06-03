@@ -127,26 +127,30 @@ class ControlPlaneBackupService:
 
     def _collect_records(self) -> dict[str, list[dict[str, Any]]]:
         return {
-            "snapshots": [record.to_dict() for record in self.snapshot_repository.list()],
-            "audits": [record.to_dict() for record in self.audit_repository.list()],
-            "jobs": [record.to_dict() for record in self.job_repository.list()],
-            "workers": [record.to_dict() for record in self.job_repository.list_workers()],
-            "worker_heartbeats": [record.to_dict() for record in self.job_repository.list_worker_heartbeats()],
-            "worker_heartbeat_rollups": [record.to_dict() for record in self.job_repository.list_worker_heartbeat_rollups()],
-            "job_lease_events": [record.to_dict() for record in self.job_repository.list_job_lease_events()],
-            "job_lease_event_rollups": [record.to_dict() for record in self.job_repository.list_job_lease_event_rollups()],
-            "control_plane_alerts": [record.to_dict() for record in self.job_repository.list_control_plane_alerts()],
+            "snapshots": [_json_safe(record.to_dict()) for record in self.snapshot_repository.list()],
+            "audits": [_json_safe(record.to_dict()) for record in self.audit_repository.list()],
+            "jobs": [_json_safe(record.to_dict()) for record in self.job_repository.list()],
+            "workers": [_json_safe(record.to_dict()) for record in self.job_repository.list_workers()],
+            "worker_heartbeats": [_json_safe(record.to_dict()) for record in self.job_repository.list_worker_heartbeats()],
+            "worker_heartbeat_rollups": [
+                _json_safe(record.to_dict()) for record in self.job_repository.list_worker_heartbeat_rollups()
+            ],
+            "job_lease_events": [_json_safe(record.to_dict()) for record in self.job_repository.list_job_lease_events()],
+            "job_lease_event_rollups": [
+                _json_safe(record.to_dict()) for record in self.job_repository.list_job_lease_event_rollups()
+            ],
+            "control_plane_alerts": [_json_safe(record.to_dict()) for record in self.job_repository.list_control_plane_alerts()],
             "control_plane_maintenance_events": [
-                record.to_dict() for record in self.job_repository.list_control_plane_maintenance_events()
+                _json_safe(record.to_dict()) for record in self.job_repository.list_control_plane_maintenance_events()
             ],
             "control_plane_alert_silences": [
-                record.to_dict() for record in self.job_repository.list_control_plane_alert_silences()
+                _json_safe(record.to_dict()) for record in self.job_repository.list_control_plane_alert_silences()
             ],
             "control_plane_oncall_schedules": [
-                record.to_dict() for record in self.job_repository.list_control_plane_oncall_schedules()
+                _json_safe(record.to_dict()) for record in self.job_repository.list_control_plane_oncall_schedules()
             ],
             "control_plane_oncall_change_requests": [
-                record.to_dict() for record in self.job_repository.list_control_plane_oncall_change_requests()
+                _json_safe(record.to_dict()) for record in self.job_repository.list_control_plane_oncall_change_requests()
             ],
         }
 
@@ -276,3 +280,15 @@ class ControlPlaneBackupService:
                     path.unlink()
                 elif path.is_dir():
                     path.rmdir()
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    return value

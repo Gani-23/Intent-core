@@ -31,8 +31,18 @@ class SnapshotRecordPayload(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+    organization_name: str
     environment_name: str
     auth_enabled: bool
+    authz_enabled: bool
+    require_actor_headers: bool
+    require_actor_organization_headers: bool
+    remediation_provider: str
+    remediation_model: str | None
+    remediation_runtime_enabled: bool
+    remediation_runtime_available: bool
+    remediation_fallback_enabled: bool
+    remediation_runtime_blockers: list[str]
     worker_mode: str
     database_backend: str
     database_url: str
@@ -40,12 +50,8 @@ class HealthResponse(BaseModel):
     snapshot_repository_backend: str
     audit_repository_backend: str
     job_repository_backend: str
-    control_plane_repository_layout: str
-    control_plane_mixed_backends: bool
-    snapshots_audits_repository_runtime_enabled: bool
-    snapshots_audits_repository_runtime_active: bool
-    job_repository_runtime_enabled: bool
-    job_repository_runtime_active: bool
+    postgres_runtime_enabled: bool
+    postgres_runtime_active: bool
     database_runtime_supported: bool
     database_runtime_driver: str
     database_runtime_dependency_installed: bool
@@ -62,6 +68,20 @@ class HealthResponse(BaseModel):
     active_workers: int
     queued_jobs: int
     running_jobs: int
+    runtime_validation_status: str
+    runtime_validation_cadence_status: str
+    live_workload_target_status: str
+    live_workload_target_cadence_status: str
+    live_workload_proof_status: str
+    live_workload_proof_cadence_status: str
+    operational_validation_status: str
+    soak_validation_status: str
+    backup_validation_status: str
+    backup_validation_cadence_status: str
+    backup_export_validation_status: str
+    observability_export_validation_status: str
+    deployment_readiness_ready: bool
+    deployment_readiness_blocker_count: int
     snapshots_dir: str
     audits_dir: str
     reports_dir: str
@@ -182,6 +202,22 @@ class AuditResponse(BaseModel):
     snapshot_path: str
 
 
+class RemediationIndexRecordPayload(BaseModel):
+    recorded_at: str
+    environment_name: str
+    audit_id: str
+    snapshot_id: str | None = None
+    snapshot_path: str
+    function: str
+    risk: str
+    title: str
+    summary: str
+    report_path: str
+    remediation_provider: str
+    remediation_model: str | None = None
+    supporting_facts: list[str] = Field(default_factory=list)
+
+
 class CollectTraceResponse(BaseModel):
     command: list[str]
     trace_path: str
@@ -255,6 +291,15 @@ class PruneHistoryResponse(BaseModel):
     job_lease_events_compacted: int
     worker_heartbeats_pruned: int
     job_lease_events_pruned: int
+
+
+class PrunePrivilegedApiAuditResponse(BaseModel):
+    pruned_at: str
+    retention_days: int
+    before_count: int
+    after_count: int
+    pruned_count: int
+    cutoff_timestamp: str
 
 
 class ExportControlPlaneBackupRequest(BaseModel):
@@ -381,8 +426,6 @@ class ControlPlaneRuntimeSmokeResponse(BaseModel):
     snapshot_repository_backend: str
     audit_repository_backend: str
     job_repository_backend: str
-    repository_layout: str
-    mixed_backends: bool
     snapshot_id: str
     audit_id: str
     job_id: str
@@ -399,9 +442,9 @@ class ControlPlaneRuntimeSmokeResponse(BaseModel):
 class RunControlPlaneRuntimeRehearsalRequest(BaseModel):
     changed_by: str
     expected_backend: str = "postgres"
-    expected_repository_layout: str = "shared"
     reason: str | None = None
     cleanup: bool = True
+    ignore_deployment_readiness: bool = False
 
 
 class ControlPlaneRuntimeRehearsalResponse(BaseModel):
@@ -411,17 +454,12 @@ class ControlPlaneRuntimeRehearsalResponse(BaseModel):
     reason: str | None = None
     environment_name: str
     expected_backend: str
-    expected_repository_layout: str
     database_backend: str
     snapshot_repository_backend: str
     audit_repository_backend: str
     job_repository_backend: str
-    repository_layout: str
-    mixed_backends: bool
-    snapshots_audits_repository_runtime_enabled: bool
-    snapshots_audits_repository_runtime_active: bool
-    job_repository_runtime_enabled: bool
-    job_repository_runtime_active: bool
+    postgres_runtime_enabled: bool
+    postgres_runtime_active: bool
     database_runtime_available: bool
     database_runtime_blockers: list[str]
     deployment_readiness: "ControlPlaneDeploymentReadinessResponse"
@@ -429,6 +467,755 @@ class ControlPlaneRuntimeRehearsalResponse(BaseModel):
     status: str
     smoke: dict[str, Any]
     maintenance_event_id: str | None = None
+
+
+class RunControlPlaneBackupRehearsalRequest(BaseModel):
+    changed_by: str
+    reason: str | None = None
+    cleanup: bool = True
+
+
+class ControlPlaneBackupRehearsalResponse(BaseModel):
+    rehearsal_id: str
+    executed_at: str
+    changed_by: str
+    reason: str | None = None
+    environment_name: str
+    cleanup_requested: bool
+    cleanup_completed: bool
+    backup_bundle_path: str
+    restore_root: str
+    export_counts: dict[str, int]
+    restored_counts: dict[str, int]
+    export_artifact_counts: dict[str, int]
+    restored_artifact_counts: dict[str, int]
+    checks: dict[str, bool]
+    status: str
+    maintenance_event_id: str | None = None
+
+
+class ControlPlaneBackupValidationResponse(BaseModel):
+    generated_at: str
+    environment_name: str
+    status: str
+    severity: str
+    cadence_status: str
+    due_soon_age_hours: float
+    warning_age_hours: float
+    critical_age_hours: float
+    latest_rehearsal_event_id: str | None = None
+    latest_rehearsal_recorded_at: str | None = None
+    latest_rehearsal_changed_by: str | None = None
+    latest_rehearsal_reason: str | None = None
+    latest_rehearsal_status: str | None = None
+    latest_checks: dict[str, bool] = Field(default_factory=dict)
+    age_hours: float | None = None
+    next_due_at: str | None = None
+    due_in_hours: float | None = None
+    blockers: list[str] = Field(default_factory=list)
+
+
+class ControlPlaneLiveWorkloadProofValidationResponse(BaseModel):
+    generated_at: str
+    environment_name: str
+    status: str
+    severity: str
+    cadence_status: str
+    due_soon_age_hours: float
+    warning_age_hours: float
+    critical_age_hours: float
+    latest_proof_event_id: str | None = None
+    latest_proof_recorded_at: str | None = None
+    latest_proof_changed_by: str | None = None
+    latest_proof_reason: str | None = None
+    latest_proof_status: str | None = None
+    latest_trace_path: str | None = None
+    latest_target_mode: str | None = None
+    latest_target_profile: str | None = None
+    latest_approved_target_base_url: str | None = None
+    latest_drift_target_base_url: str | None = None
+    latest_snapshot_id: str | None = None
+    latest_audit_id: str | None = None
+    latest_alert_count: int | None = None
+    latest_event_count: int | None = None
+    latest_unexpected_targets: list[str] = Field(default_factory=list)
+    latest_impacted_functions: list[str] = Field(default_factory=list)
+    age_hours: float | None = None
+    next_due_at: str | None = None
+    due_in_hours: float | None = None
+    blockers: list[str] = Field(default_factory=list)
+
+
+class ControlPlaneLiveWorkloadTargetValidationResponse(BaseModel):
+    generated_at: str
+    environment_name: str
+    status: str
+    severity: str
+    cadence_status: str
+    due_soon_age_hours: float
+    target_mode: str
+    target_profile: str
+    approved_target_base_url: str | None = None
+    drift_target_base_url: str | None = None
+    timeout_seconds: float
+    age_hours: float | None = None
+    warning_age_hours: float
+    critical_age_hours: float
+    next_due_at: str | None = None
+    results: dict[str, Any] = Field(default_factory=dict)
+    blockers: list[str] = Field(default_factory=list)
+    latest_validation_event_id: str | None = None
+    latest_validation_recorded_at: str | None = None
+    latest_validation_changed_by: str | None = None
+    latest_validation_reason: str | None = None
+
+
+class LiveWorkloadTargetProfileResponse(BaseModel):
+    name: str
+    approved_target_base_url: str
+    drift_target_base_url: str
+    organization_name: str | None = None
+    team_name: str | None = None
+    project_name: str | None = None
+    environment_name: str | None = None
+    approved_probe_url: str | None = None
+    drift_probe_url: str | None = None
+    approved_action_url: str | None = None
+    drift_action_url: str | None = None
+    approved_probe_method: str | None = None
+    drift_probe_method: str | None = None
+    approved_action_method: str | None = None
+    drift_action_method: str | None = None
+    approved_headers: dict[str, str] | None = None
+    drift_headers: dict[str, str] | None = None
+    approved_expected_statuses: list[int] | None = None
+    drift_expected_statuses: list[int] | None = None
+    request_timeout_seconds: float | None = None
+    source: str
+    built_in: bool
+    enabled: bool
+    description: str | None = None
+
+
+class LiveWorkloadTargetProfileActivityEventResponse(BaseModel):
+    event_id: str
+    recorded_at: str
+    event_type: str
+    category: str
+    changed_by: str
+    reason: str | None = None
+    status: str | None = None
+    summary: str | None = None
+
+
+class LiveWorkloadTargetProfileActivityAlertResponse(BaseModel):
+    alert_id: str
+    created_at: str
+    alert_key: str
+    category: str
+    status: str
+    severity: str
+    summary: str
+
+
+class LiveWorkloadTargetProfileActivityResponse(BaseModel):
+    profile_name: str
+    organization_name: str | None = None
+    team_name: str | None = None
+    project_name: str | None = None
+    environment_name: str | None = None
+    latest_validation: dict[str, Any] | None = None
+    latest_drift_proof: dict[str, Any] | None = None
+    latest_canary_verification: dict[str, Any] | None = None
+    latest_operational_validation: dict[str, Any] | None = None
+    event_category_counts: dict[str, int] = Field(default_factory=dict)
+    alert_category_counts: dict[str, int] = Field(default_factory=dict)
+    recent_events: list[LiveWorkloadTargetProfileActivityEventResponse] = Field(default_factory=list)
+    recent_alerts: list[LiveWorkloadTargetProfileActivityAlertResponse] = Field(default_factory=list)
+
+
+class LiveWorkloadTargetProfileExplanationResponse(BaseModel):
+    profile_name: str
+    status: str
+    source_event_type: str
+    source_event_id: str | None = None
+    generated_at: str
+    remediation_provider: str
+    remediation_model: str | None = None
+    remediation_available: bool
+    remediation_fallback_active: bool
+    title: str
+    summary: str
+    risk: str
+    immediate_action: str
+    long_term_fix: str
+    supporting_facts: list[str] = Field(default_factory=list)
+
+
+class OrganizationTeamResponse(BaseModel):
+    organization_name: str
+    team_name: str
+    description: str | None = None
+    manager_usernames: list[str] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+
+
+class OrganizationProjectResponse(BaseModel):
+    organization_name: str
+    team_name: str | None = None
+    project_name: str
+    description: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class OrganizationMembershipResponse(BaseModel):
+    username: str
+    organization_name: str
+    team_name: str | None = None
+    project_name: str | None = None
+    role: str
+    status: str
+    granted_by: str | None = None
+    granted_at: str
+    updated_at: str
+    note: str | None = None
+
+
+class OrganizationRemovalEventResponse(BaseModel):
+    event_id: str
+    username: str
+    organization_name: str
+    team_name: str | None = None
+    project_name: str | None = None
+    role: str
+    removed_by: str
+    removed_at: str
+    reason: str
+    prior_status: str
+
+
+class OrganizationAssignmentResponse(BaseModel):
+    assignment_id: str
+    organization_name: str
+    team_name: str | None = None
+    project_name: str | None = None
+    work_type: str
+    title: str
+    subject_id: str | None = None
+    assigned_to: str | None = None
+    assigned_by: str | None = None
+    status: str
+    details: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+
+class OrganizationAssignmentCommentResponse(BaseModel):
+    comment_id: str
+    assignment_id: str
+    organization_name: str
+    team_name: str | None = None
+    project_name: str | None = None
+    author: str
+    body: str
+    kind: str
+    created_at: str
+
+
+class OrganizationWorkspaceResponse(BaseModel):
+    organization_name: str
+    teams: list[OrganizationTeamResponse] = Field(default_factory=list)
+    projects: list[OrganizationProjectResponse] = Field(default_factory=list)
+    memberships: list[OrganizationMembershipResponse] = Field(default_factory=list)
+    removal_events: list[OrganizationRemovalEventResponse] = Field(default_factory=list)
+    assignments: list[OrganizationAssignmentResponse] = Field(default_factory=list)
+    assignment_comments: list[OrganizationAssignmentCommentResponse] = Field(default_factory=list)
+
+
+class UpsertOrganizationTeamRequest(BaseModel):
+    organization_name: str | None = None
+    team_name: str
+    description: str | None = None
+    manager_usernames: list[str] = Field(default_factory=list)
+
+
+class UpsertOrganizationProjectRequest(BaseModel):
+    organization_name: str | None = None
+    team_name: str | None = None
+    project_name: str
+    description: str | None = None
+
+
+class UpsertOrganizationMembershipRequest(BaseModel):
+    username: str
+    organization_name: str | None = None
+    team_name: str | None = None
+    project_name: str | None = None
+    role: str
+    note: str | None = None
+
+
+class RemoveOrganizationMembershipRequest(BaseModel):
+    organization_name: str | None = None
+    team_name: str | None = None
+    project_name: str | None = None
+    reason: str
+
+
+class CreateOrganizationAssignmentRequest(BaseModel):
+    organization_name: str | None = None
+    team_name: str | None = None
+    project_name: str | None = None
+    work_type: str
+    title: str
+    subject_id: str | None = None
+    assigned_to: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class UpdateOrganizationAssignmentRequest(BaseModel):
+    status: str | None = None
+    assigned_to: str | None = None
+    title: str | None = None
+    details: dict[str, Any] | None = None
+    comment: str | None = None
+
+
+class CreateOrganizationAssignmentCommentRequest(BaseModel):
+    body: str
+
+
+class UpsertLiveWorkloadTargetProfileRequest(BaseModel):
+    name: str
+    approved_target_base_url: str
+    drift_target_base_url: str
+    organization_name: str | None = None
+    team_name: str | None = None
+    project_name: str | None = None
+    environment_name: str | None = None
+    approved_probe_url: str | None = None
+    drift_probe_url: str | None = None
+    approved_action_url: str | None = None
+    drift_action_url: str | None = None
+    approved_probe_method: str | None = None
+    drift_probe_method: str | None = None
+    approved_action_method: str | None = None
+    drift_action_method: str | None = None
+    approved_headers: dict[str, str] | None = None
+    drift_headers: dict[str, str] | None = None
+    approved_expected_statuses: list[int] | None = None
+    drift_expected_statuses: list[int] | None = None
+    request_timeout_seconds: float | None = None
+    enabled: bool = True
+    description: str | None = None
+
+
+class DeleteLiveWorkloadTargetProfileRequest(BaseModel):
+    reason: str | None = None
+
+
+class LiveWorkloadProofBundleResponse(BaseModel):
+    exported_at: str
+    environment_name: str
+    target_profile: str
+    output_path: str
+    sha256: str
+    size_bytes: int
+    latest_target_validation_event_id: str | None = None
+    latest_proof_event_id: str | None = None
+    latest_operational_validation_event_id: str | None = None
+
+
+class LiveWorkloadProofBundleRecordResponse(BaseModel):
+    path: str
+    file_name: str
+    modified_at: str
+    size_bytes: int
+    sha256: str
+
+
+class InspectLiveWorkloadProofBundleRequest(BaseModel):
+    path: str
+
+
+class DeleteLiveWorkloadProofBundleRequest(BaseModel):
+    path: str
+    reason: str | None = None
+
+
+class PruneLiveWorkloadProofBundlesRequest(BaseModel):
+    reason: str | None = None
+    retention_days: int | None = None
+
+
+class LiveWorkloadProofBundleInspectionResponse(BaseModel):
+    path: str
+    file_name: str
+    size_bytes: int
+    sha256: str
+    valid: bool
+    exported_at: str | None = None
+    environment_name: str | None = None
+    organization_name: str | None = None
+    target_profile: str | None = None
+    latest_target_validation_event_id: str | None = None
+    latest_proof_event_id: str | None = None
+    latest_operational_validation_event_id: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+
+
+class LiveWorkloadProofBundleDeleteResponse(BaseModel):
+    deleted_at: str
+    path: str
+    existed: bool
+
+
+class LiveWorkloadProofBundlePruneResponse(BaseModel):
+    pruned_at: str
+    retention_days: int
+    before_count: int
+    after_count: int
+    pruned_count: int
+    deleted_paths: list[str] = Field(default_factory=list)
+
+
+class RunLiveWorkloadTargetValidationRequest(BaseModel):
+    changed_by: str
+    reason: str | None = None
+    timeout_seconds: float = 10.0
+
+
+class RunLiveWorkloadTargetProfileValidationRequest(BaseModel):
+    changed_by: str
+    reason: str | None = None
+    timeout_seconds: float = 10.0
+
+
+class ExportLiveWorkloadProofBundleRequest(BaseModel):
+    changed_by: str
+    reason: str | None = None
+
+
+class ControlPlaneBackupExportValidationResponse(BaseModel):
+    generated_at: str
+    environment_name: str
+    status: str
+    severity: str
+    latest_export_event_id: str | None = None
+    latest_exported_at: str | None = None
+    latest_export_changed_by: str | None = None
+    latest_export_path: str | None = None
+    age_hours: float | None = None
+    warning_age_hours: float
+    critical_age_hours: float
+    blockers: list[str] = Field(default_factory=list)
+
+
+class ControlPlaneBackupBundlePayload(BaseModel):
+    path: str
+    file_name: str
+    modified_at: str
+    size_bytes: int
+
+
+class ControlPlaneObservabilityExportValidationResponse(BaseModel):
+    generated_at: str
+    organization_name: str
+    environment_name: str
+    status: str
+    severity: str
+    latest_export_event_id: str | None = None
+    latest_exported_at: str | None = None
+    latest_export_changed_by: str | None = None
+    latest_export_path: str | None = None
+    age_hours: float | None = None
+    warning_age_hours: float
+    critical_age_hours: float
+    blockers: list[str] = Field(default_factory=list)
+
+
+class ControlPlaneObservabilityBundlePayload(BaseModel):
+    path: str
+    file_name: str
+    modified_at: str
+    size_bytes: int
+
+
+class ProcessControlPlaneBackupsRequest(BaseModel):
+    changed_by: str
+    reason: str | None = None
+    force: bool = False
+
+
+class ProcessControlPlaneBackupsResponse(BaseModel):
+    processed_at: str
+    environment_name: str
+    exported: bool
+    pruned_count: int
+    reason: str | None = None
+    backup: ControlPlaneBackupResponse | None = None
+
+
+class RunControlPlaneOperationalValidationRequest(BaseModel):
+    changed_by: str
+    expected_backend: str = "postgres"
+    reason: str | None = None
+    process_backups: bool = True
+    cleanup: bool = True
+    run_queue_validation: bool = True
+    run_workload_validation: bool = True
+    run_live_workload_drift_proof: bool = True
+    queue_success_jobs: int = 2
+    queue_failure_jobs: int = 1
+    queue_delay_seconds: float = 0.0
+    run_inline_queue_worker: bool = True
+    workload_rounds: int = 3
+    workload_maintenance_pause_jobs: int = 3
+    inject_maintenance_mode_pause: bool = True
+    run_worker_recovery_validation: bool = True
+
+
+class RunControlPlaneSoakValidationRequest(BaseModel):
+    changed_by: str
+    expected_backend: str = "postgres"
+    reason: str | None = None
+    target_profile_name: str | None = None
+    iterations: int = 3
+    pause_seconds: float = 2.0
+    process_backups: bool = True
+    cleanup: bool = True
+    run_queue_validation: bool = True
+    run_workload_validation: bool = True
+    run_live_workload_drift_proof: bool = True
+    queue_success_jobs: int = 2
+    queue_failure_jobs: int = 1
+    queue_delay_seconds: float = 0.0
+    run_inline_queue_worker: bool = True
+    workload_rounds: int = 3
+    workload_maintenance_pause_jobs: int = 3
+    inject_maintenance_mode_pause: bool = True
+    run_worker_recovery_validation: bool = True
+
+
+class RunControlPlaneQueueValidationRequest(BaseModel):
+    changed_by: str
+    reason: str | None = None
+    queue_success_jobs: int = 2
+    queue_failure_jobs: int = 1
+    queue_delay_seconds: float = 0.0
+    run_inline_queue_worker: bool = True
+
+
+class RunLiveWorkloadDriftProofRequest(BaseModel):
+    changed_by: str
+    reason: str | None = None
+    persist: bool = True
+    snapshot_id: str | None = None
+    audit_id: str | None = None
+
+
+class RunLiveWorkloadTargetProfileDriftProofRequest(BaseModel):
+    changed_by: str
+    reason: str | None = None
+    persist: bool = True
+    snapshot_id: str | None = None
+    audit_id: str | None = None
+
+
+class RunLiveWorkloadTargetProfileCanaryVerifierRequest(BaseModel):
+    changed_by: str
+    expected_backend: str = "postgres"
+    reason: str | None = None
+    process_backups: bool = True
+    cleanup: bool = True
+    run_queue_validation: bool = True
+    run_workload_validation: bool = True
+    run_worker_recovery_validation: bool = True
+    queue_success_jobs: int = 2
+    queue_failure_jobs: int = 1
+    queue_delay_seconds: float = 0.0
+    run_inline_queue_worker: bool = True
+    workload_rounds: int = 3
+    workload_maintenance_pause_jobs: int = 3
+    inject_maintenance_mode_pause: bool = True
+
+
+class ControlPlaneQueueValidationResponse(BaseModel):
+    validation_id: str
+    executed_at: str
+    changed_by: str
+    reason: str | None = None
+    environment_name: str
+    submitted_jobs: int
+    expected_successes: int
+    expected_failures: int
+    processed_jobs: int
+    completed_jobs: int
+    failed_jobs: int
+    checks: dict[str, bool]
+    status: str
+    job_ids: list[str]
+    maintenance_event_id: str | None = None
+
+
+class ControlPlaneWorkloadValidationResponse(BaseModel):
+    validation_id: str
+    executed_at: str
+    changed_by: str
+    reason: str | None = None
+    environment_name: str
+    rounds: int
+    queue_success_jobs: int
+    queue_failure_jobs: int
+    queue_delay_seconds: float
+    inject_maintenance_mode_pause: bool
+    maintenance_pause_jobs: int
+    queue_rounds: list[dict[str, Any]]
+    maintenance_pause: dict[str, Any] | None = None
+    checks: dict[str, bool]
+    status: str
+    maintenance_event_id: str | None = None
+
+
+class ControlPlaneWorkerRecoveryValidationResponse(BaseModel):
+    validation_id: str
+    executed_at: str
+    changed_by: str
+    reason: str | None = None
+    environment_name: str
+    job_id: str
+    simulated_worker_id: str
+    processed_jobs: int
+    final_job_status: str
+    lease_event_types: list[str]
+    checks: dict[str, bool]
+    status: str
+    maintenance_event_id: str | None = None
+
+
+class ControlPlaneOperationalValidationResponse(BaseModel):
+    validation_id: str
+    executed_at: str
+    changed_by: str
+    reason: str | None = None
+    environment_name: str
+    expected_backend: str
+    process_backups: bool
+    runtime_rehearsal: dict[str, Any]
+    backup_rehearsal: dict[str, Any]
+    live_workload_target_validation: ControlPlaneLiveWorkloadTargetValidationResponse
+    live_workload_drift_proof: LiveWorkloadDriftProofResponse | None = None
+    backup_export_validation: ControlPlaneBackupExportValidationResponse
+    backup_validation: ControlPlaneBackupValidationResponse
+    live_workload_proof_validation: ControlPlaneLiveWorkloadProofValidationResponse
+    observability_export_validation: ControlPlaneObservabilityExportValidationResponse
+    queue_validation: ControlPlaneQueueValidationResponse | None = None
+    workload_validation: ControlPlaneWorkloadValidationResponse | None = None
+    worker_recovery_validation: ControlPlaneWorkerRecoveryValidationResponse | None = None
+    deployment_readiness: "ControlPlaneDeploymentReadinessResponse"
+    checks: dict[str, bool]
+    status: str
+    maintenance_event_id: str | None = None
+
+
+class ControlPlaneSoakValidationIterationResponse(BaseModel):
+    iteration: int
+    executed_at: str
+    duration_seconds: float
+    status: str
+    validation_id: str | None = None
+    validation_event_id: str | None = None
+    failed_checks: list[str] = Field(default_factory=list)
+
+
+class ControlPlaneSoakValidationResponse(BaseModel):
+    soak_id: str
+    executed_at: str
+    changed_by: str
+    reason: str | None = None
+    environment_name: str
+    expected_backend: str
+    iterations: int
+    pause_seconds: float
+    target_profile_name: str | None = None
+    process_backups: bool
+    passed_iterations: int
+    failed_iterations: int
+    results: list[ControlPlaneSoakValidationIterationResponse] = Field(default_factory=list)
+    status: str
+    maintenance_event_id: str | None = None
+
+
+class LiveWorkloadDriftProofResponse(BaseModel):
+    proof_id: str
+    executed_at: str
+    changed_by: str
+    reason: str | None = None
+    environment_name: str
+    sample_service_path: str
+    snapshot_id: str | None = None
+    snapshot_path: str
+    audit_id: str | None = None
+    trace_path: str
+    target_mode: str
+    target_profile: str
+    approved_target_base_url: str | None = None
+    drift_target_base_url: str | None = None
+    event_count: int
+    alert_count: int
+    passed: bool
+    unexpected_targets: list[str] = Field(default_factory=list)
+    impacted_functions: list[str] = Field(default_factory=list)
+    report_paths: list[str] = Field(default_factory=list)
+    explanation: AuditExplanationPayload
+    maintenance_event_id: str | None = None
+
+
+class ControlPlaneOperationalValidationEvidenceResponse(BaseModel):
+    environment_name: str
+    status: str
+    latest_validation_at: str | None = None
+    latest_validation_id: str | None = None
+    latest_validation_event_id: str | None = None
+    latest_validation_result: str | None = None
+    age_hours: float | None = None
+    blockers: list[str] = Field(default_factory=list)
+
+
+class ControlPlaneSoakValidationEvidenceResponse(BaseModel):
+    environment_name: str
+    status: str
+    latest_soak_at: str | None = None
+    latest_soak_id: str | None = None
+    latest_soak_event_id: str | None = None
+    latest_soak_result: str | None = None
+    latest_expected_backend: str | None = None
+    latest_iterations: int | None = None
+    latest_passed_iterations: int | None = None
+    latest_failed_iterations: int | None = None
+    active_soak_id: str | None = None
+    active_current_iteration: int | None = None
+    active_total_iterations: int | None = None
+    active_last_iteration_status: str | None = None
+    active_target_profile_name: str | None = None
+    active_progress_at: str | None = None
+    age_hours: float | None = None
+    blockers: list[str] = Field(default_factory=list)
+
+
+class ControlPlaneObservabilityExportResponse(BaseModel):
+    exported_at: str
+    organization_name: str
+    environment_name: str
+    export_path: str
+    alert_count: int
+    maintenance_event_count: int
+    metrics_line_count: int
+    delivery_state: str
+    delivery_status_code: int | None = None
+    delivery_error: str | None = None
 
 
 class ControlPlaneMaintenancePreflightResponse(BaseModel):
@@ -455,6 +1242,11 @@ class ControlPlaneMaintenancePreflightResponse(BaseModel):
     completed_jobs: int
     failed_jobs: int
     runtime_validation: ControlPlaneRuntimeValidationResponse
+    live_workload_target_validation: ControlPlaneLiveWorkloadTargetValidationResponse
+    live_workload_proof_validation: ControlPlaneLiveWorkloadProofValidationResponse
+    backup_validation: ControlPlaneBackupValidationResponse
+    backup_export_validation: ControlPlaneBackupExportValidationResponse
+    observability_export_validation: ControlPlaneObservabilityExportValidationResponse
     deployment_readiness: "ControlPlaneDeploymentReadinessResponse"
     runtime_validation_change_control_requests: list["ControlPlaneRuntimeValidationChangeControlPayload"] = Field(default_factory=list)
     blockers: list[str]
@@ -466,6 +1258,11 @@ class ControlPlaneDeploymentReadinessResponse(BaseModel):
     evaluated_at: str
     environment_name: str
     runtime_validation: "ControlPlaneRuntimeValidationResponse"
+    live_workload_target_validation: ControlPlaneLiveWorkloadTargetValidationResponse
+    live_workload_proof_validation: ControlPlaneLiveWorkloadProofValidationResponse
+    backup_validation: ControlPlaneBackupValidationResponse
+    backup_export_validation: ControlPlaneBackupExportValidationResponse
+    observability_export_validation: ControlPlaneObservabilityExportValidationResponse
     runtime_validation_change_control_requests: list["ControlPlaneRuntimeValidationChangeControlPayload"] = Field(default_factory=list)
     owner_team_rollups: list[dict[str, Any]] = Field(default_factory=list)
     blocked_owner_team_count: int = 0
@@ -662,6 +1459,9 @@ class EvaluateControlPlaneCutoverReadinessRequest(BaseModel):
     rehearsal_max_age_hours: float = 24.0
     require_apply_rehearsal: bool = False
     require_runtime_validation: bool | None = None
+    require_live_workload_target_validation: bool | None = None
+    require_live_workload_proof_validation: bool | None = None
+    require_backup_validation: bool | None = None
 
 
 class ControlPlaneCutoverReadinessResponse(BaseModel):
@@ -673,9 +1473,17 @@ class ControlPlaneCutoverReadinessResponse(BaseModel):
     rehearsal_max_age_hours: float
     require_apply_rehearsal: bool
     require_runtime_validation: bool
+    require_live_workload_target_validation: bool
+    require_live_workload_proof_validation: bool
+    require_backup_validation: bool
     latest_bundle_event: ControlPlaneMaintenanceEventPayload | None = None
     latest_rehearsal_event: ControlPlaneMaintenanceEventPayload | None = None
     runtime_validation: ControlPlaneRuntimeValidationResponse
+    live_workload_target_validation: ControlPlaneLiveWorkloadTargetValidationResponse
+    live_workload_proof_validation: ControlPlaneLiveWorkloadProofValidationResponse
+    backup_validation: ControlPlaneBackupValidationResponse
+    backup_export_validation: ControlPlaneBackupExportValidationResponse
+    observability_export_validation: ControlPlaneObservabilityExportValidationResponse
     runtime_validation_change_control_requests: list["ControlPlaneRuntimeValidationChangeControlPayload"] = Field(default_factory=list)
     package_inspection: PostgresBootstrapPackageInspectionResponse | None = None
     blockers: list[str]
@@ -693,6 +1501,9 @@ class DecideControlPlaneCutoverRequest(BaseModel):
     rehearsal_max_age_hours: float = 24.0
     require_apply_rehearsal: bool = False
     require_runtime_validation: bool | None = None
+    require_live_workload_target_validation: bool | None = None
+    require_live_workload_proof_validation: bool | None = None
+    require_backup_validation: bool | None = None
     allow_override: bool = False
 
     @model_validator(mode="after")
@@ -721,6 +1532,9 @@ class ControlPlaneCutoverPromotionResponse(BaseModel):
     rehearsal_max_age_hours: float
     require_apply_rehearsal: bool
     require_runtime_validation: bool
+    require_live_workload_target_validation: bool
+    require_live_workload_proof_validation: bool
+    require_backup_validation: bool
     allow_override: bool
     override_applied: bool
     readiness: ControlPlaneCutoverReadinessResponse
@@ -772,6 +1586,50 @@ class ControlPlaneMaintenanceEventPayload(BaseModel):
     changed_by: str
     reason: str | None = None
     details: dict[str, Any]
+
+
+class OrganizationWorkspaceOperationsResponse(BaseModel):
+    organization_name: str
+    team_name: str | None = None
+    project_name: str | None = None
+    target_profiles: list[LiveWorkloadTargetProfileResponse] = Field(default_factory=list)
+    soak_events: list[ControlPlaneMaintenanceEventPayload] = Field(default_factory=list)
+
+
+class SecretAliasResponse(BaseModel):
+    alias: str
+    env_var_name: str
+    description: str | None = None
+    usage_scope: str | None = None
+    present: bool
+    created_at: str
+    updated_at: str
+
+
+class UpsertSecretAliasRequest(BaseModel):
+    alias: str
+    env_var_name: str
+    description: str | None = None
+    usage_scope: str | None = None
+
+
+class DeleteSecretAliasRequest(BaseModel):
+    alias: str
+
+
+class DeleteSecretAliasResponse(BaseModel):
+    alias: str
+    deleted: bool
+
+
+class PrivilegedApiAuditEntryPayload(BaseModel):
+    recorded_at: str
+    environment_name: str
+    action: str
+    target: str
+    outcome: str
+    actor: dict[str, Any]
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class ControlPlaneAlertRecordPayload(BaseModel):
@@ -1116,6 +1974,67 @@ class RuntimeValidationReviewAnalyticsPayload(BaseModel):
     owner_team_rollups: list[RuntimeValidationReviewOwnerRollupPayload]
 
 
+class BackupExportValidationAnalyticsPayload(BaseModel):
+    generated_at: str
+    environment_name: str
+    status: str
+    severity: str
+    latest_export_event_id: str | None = None
+    latest_exported_at: str | None = None
+    latest_export_changed_by: str | None = None
+    latest_export_path: str | None = None
+    age_hours: float | None = None
+    warning_age_hours: float
+    critical_age_hours: float
+    blockers: list[str]
+
+
+class ObservabilityExportValidationAnalyticsPayload(BaseModel):
+    generated_at: str
+    organization_name: str
+    environment_name: str
+    status: str
+    severity: str
+    latest_export_event_id: str | None = None
+    latest_exported_at: str | None = None
+    latest_export_changed_by: str | None = None
+    latest_export_path: str | None = None
+    age_hours: float | None = None
+    warning_age_hours: float
+    critical_age_hours: float
+    blockers: list[str]
+
+
+class LiveWorkloadProofValidationAnalyticsPayload(BaseModel):
+    generated_at: str
+    environment_name: str
+    status: str
+    severity: str
+    cadence_status: str
+    due_soon_age_hours: float
+    warning_age_hours: float
+    critical_age_hours: float
+    latest_proof_event_id: str | None = None
+    latest_proof_recorded_at: str | None = None
+    latest_proof_changed_by: str | None = None
+    latest_proof_status: str | None = None
+    latest_trace_path: str | None = None
+    latest_target_mode: str | None = None
+    latest_target_profile: str | None = None
+    latest_approved_target_base_url: str | None = None
+    latest_drift_target_base_url: str | None = None
+    latest_snapshot_id: str | None = None
+    latest_audit_id: str | None = None
+    latest_alert_count: int | None = None
+    latest_event_count: int | None = None
+    latest_unexpected_targets: list[str]
+    latest_impacted_functions: list[str]
+    age_hours: float | None = None
+    next_due_at: str | None = None
+    due_in_hours: float | None = None
+    blockers: list[str]
+
+
 class DeploymentReadinessAnalyticsPayload(BaseModel):
     evaluated_at: str
     environment_name: str
@@ -1129,6 +2048,20 @@ class DeploymentReadinessAnalyticsPayload(BaseModel):
     owner_team_rollups: list[dict[str, Any]]
     blockers: list[str]
     warnings: list[str]
+
+
+class PrivilegedApiAuditAnalyticsPayload(BaseModel):
+    generated_at: str
+    window_hours: float
+    total_entries: int
+    recent_entries: int
+    non_ok_recent_entries: int
+    denied_recent_entries: int
+    blocked_recent_entries: int
+    rejected_recent_entries: int
+    top_actions: list[dict[str, Any]]
+    top_roles: list[dict[str, Any]]
+    sample_non_ok_entries: list[dict[str, Any]]
 
 
 class ControlPlaneAlertThresholdsPayload(BaseModel):
@@ -1151,6 +2084,11 @@ class ControlPlaneAlertThresholdsPayload(BaseModel):
     runtime_rehearsal_due_soon_age_hours: float
     runtime_rehearsal_warning_age_hours: float
     runtime_rehearsal_critical_age_hours: float
+    backup_rehearsal_due_soon_age_hours: float
+    backup_rehearsal_warning_age_hours: float
+    backup_rehearsal_critical_age_hours: float
+    backup_export_warning_age_hours: float
+    backup_export_critical_age_hours: float
 
 
 class ControlPlaneFindingPayload(BaseModel):
@@ -1187,10 +2125,7 @@ class ControlPlaneRuntimeValidationResponse(BaseModel):
     latest_rehearsal_reason: str | None = None
     latest_rehearsal_status: str | None = None
     latest_expected_backend: str | None = None
-    latest_expected_repository_layout: str | None = None
     latest_database_backend: str | None = None
-    latest_repository_layout: str | None = None
-    latest_mixed_backends: bool | None = None
     latest_checks: dict[str, bool] = Field(default_factory=dict)
     age_hours: float | None = None
     next_due_at: str | None = None
@@ -1409,6 +2344,68 @@ class ControlPlaneAnalyticsResponse(BaseModel):
     jobs: JobAnalyticsPayload
     oncall: OnCallAnalyticsPayload
     runtime_validation: ControlPlaneRuntimeValidationResponse
+    live_workload_target_validation: ControlPlaneLiveWorkloadTargetValidationResponse
+    live_workload_proof_validation: LiveWorkloadProofValidationAnalyticsPayload
+    backup_validation: ControlPlaneBackupValidationResponse
+    backup_export_validation: BackupExportValidationAnalyticsPayload
+    observability_export_validation: ObservabilityExportValidationAnalyticsPayload
     deployment_readiness: DeploymentReadinessAnalyticsPayload
     runtime_validation_reviews: RuntimeValidationReviewAnalyticsPayload
+    privileged_api_audit: PrivilegedApiAuditAnalyticsPayload
     evaluation: ControlPlaneEvaluationPayload
+
+
+class ControlPlaneTrustScoreFactorPayload(BaseModel):
+    code: str
+    label: str
+    impact: int
+    status: str
+    summary: str
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ControlPlaneTrustScoreResponse(BaseModel):
+    generated_at: str
+    environment_name: str
+    score: int
+    grade: str
+    status: str
+    factors: list[ControlPlaneTrustScoreFactorPayload] = Field(default_factory=list)
+
+
+class ControlPlaneIncidentNarrativeTimelineEntryPayload(BaseModel):
+    recorded_at: str
+    source_type: str
+    source_id: str
+    title: str
+    summary: str
+    severity: str | None = None
+
+
+class ControlPlaneIncidentNarrativeResponse(BaseModel):
+    generated_at: str
+    environment_name: str
+    headline: str
+    status: str
+    summary: str
+    likely_causes: list[str] = Field(default_factory=list)
+    immediate_actions: list[str] = Field(default_factory=list)
+    timeline: list[ControlPlaneIncidentNarrativeTimelineEntryPayload] = Field(default_factory=list)
+
+
+class ControlPlaneCanaryVerifierResponse(BaseModel):
+    verification_id: str
+    executed_at: str
+    changed_by: str
+    reason: str | None = None
+    environment_name: str
+    target_profile_name: str
+    expected_backend: str
+    target_validation: ControlPlaneLiveWorkloadTargetValidationResponse
+    drift_proof: LiveWorkloadDriftProofResponse
+    operational_validation: dict[str, Any]
+    checks: dict[str, bool]
+    blockers: list[str] = Field(default_factory=list)
+    verdict: str
+    recommended_action: str
+    maintenance_event_id: str | None = None

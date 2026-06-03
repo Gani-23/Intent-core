@@ -1,0 +1,15 @@
+[Unit]
+Description=Living Systems Auditor control plane
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/living-systems-auditor
+RemainAfterExit=yes
+ExecStart=/usr/bin/docker compose --profile postgres --env-file /opt/living-systems-auditor/docker/control.aws.env -f /opt/living-systems-auditor/docker/compose.control.yml up -d
+ExecStop=/usr/bin/docker compose --profile postgres --env-file /opt/living-systems-auditor/docker/control.aws.env -f /opt/living-systems-auditor/docker/compose.control.yml down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

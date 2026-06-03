@@ -6,6 +6,16 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from lsa.services.control_plane_backup_operations_service import ControlPlaneBackupOperationsService
+from lsa.services.control_plane_backup_validation_service import ControlPlaneBackupValidationService
+from lsa.services.control_plane_live_workload_target_validation_service import (
+    ControlPlaneLiveWorkloadTargetValidationService,
+)
+from lsa.services.control_plane_live_workload_proof_validation_service import (
+    ControlPlaneLiveWorkloadProofValidationService,
+)
+from lsa.services.datetime_utils import parse_datetime_value
+from lsa.services.control_plane_observability_export_service import ControlPlaneObservabilityExportService
 from lsa.services.control_plane_runtime_validation_service import ControlPlaneRuntimeValidationService
 from lsa.services.control_plane_runtime_validation_review_service import ControlPlaneRuntimeValidationReviewService
 from lsa.services.postgres_bootstrap_service import PostgresBootstrapService
@@ -18,13 +28,8 @@ def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _parse_ts(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
+def _parse_ts(value: object | None) -> datetime | None:
+    return parse_datetime_value(value)
 
 
 @dataclass(slots=True)
@@ -37,9 +42,17 @@ class ControlPlaneCutoverReadinessSummary:
     rehearsal_max_age_hours: float
     require_apply_rehearsal: bool
     require_runtime_validation: bool
+    require_live_workload_target_validation: bool
+    require_live_workload_proof_validation: bool
+    require_backup_validation: bool
     latest_bundle_event: dict[str, Any] | None
     latest_rehearsal_event: dict[str, Any] | None
     runtime_validation: dict[str, Any]
+    live_workload_target_validation: dict[str, Any]
+    live_workload_proof_validation: dict[str, Any]
+    backup_validation: dict[str, Any]
+    backup_export_validation: dict[str, Any]
+    observability_export_validation: dict[str, Any]
     package_inspection: dict[str, Any] | None
     runtime_validation_change_control_requests: list[dict[str, Any]] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
@@ -59,9 +72,17 @@ class ControlPlaneCutoverReadinessSummary:
             "rehearsal_max_age_hours": self.rehearsal_max_age_hours,
             "require_apply_rehearsal": self.require_apply_rehearsal,
             "require_runtime_validation": self.require_runtime_validation,
+            "require_live_workload_target_validation": self.require_live_workload_target_validation,
+            "require_live_workload_proof_validation": self.require_live_workload_proof_validation,
+            "require_backup_validation": self.require_backup_validation,
             "latest_bundle_event": None if self.latest_bundle_event is None else dict(self.latest_bundle_event),
             "latest_rehearsal_event": None if self.latest_rehearsal_event is None else dict(self.latest_rehearsal_event),
             "runtime_validation": dict(self.runtime_validation),
+            "live_workload_target_validation": dict(self.live_workload_target_validation),
+            "live_workload_proof_validation": dict(self.live_workload_proof_validation),
+            "backup_validation": dict(self.backup_validation),
+            "backup_export_validation": dict(self.backup_export_validation),
+            "observability_export_validation": dict(self.observability_export_validation),
             "runtime_validation_change_control_requests": [
                 dict(item) for item in self.runtime_validation_change_control_requests
             ],
@@ -86,6 +107,9 @@ class ControlPlaneCutoverReadinessService:
         rehearsal_max_age_hours: float = 24.0,
         require_apply_rehearsal: bool = False,
         require_runtime_validation: bool | None = None,
+        require_live_workload_target_validation: bool | None = None,
+        require_live_workload_proof_validation: bool | None = None,
+        require_backup_validation: bool | None = None,
     ) -> ControlPlaneCutoverReadinessSummary:
         target_config = inspect_database_config(
             root_dir=self.settings.root_dir,
@@ -100,6 +124,22 @@ class ControlPlaneCutoverReadinessService:
             if require_runtime_validation is None
             else require_runtime_validation
         )
+        effective_require_live_workload_target_validation = (
+            self.settings.cutover_live_workload_target_validation_required
+            if require_live_workload_target_validation is None
+            else require_live_workload_target_validation
+        )
+        effective_require_live_workload_proof_validation = (
+            self.settings.cutover_live_workload_proof_required
+            if require_live_workload_proof_validation is None
+            else require_live_workload_proof_validation
+        )
+        effective_require_backup_validation = (
+            self.settings.cutover_backup_validation_required
+            if require_backup_validation is None
+            else require_backup_validation
+        )
+        effective_require_observability_validation = self.settings.cutover_observability_validation_required
         runtime_policy_bundle = load_runtime_validation_policy_bundle(
             self.settings.runtime_validation_policy_path
         )
@@ -122,6 +162,39 @@ class ControlPlaneCutoverReadinessService:
             or self.settings.analytics_runtime_rehearsal_critical_age_hours,
             policy_source=runtime_policy_bundle.source_for(environment_name=self.settings.environment_name),
         ).build_summary()
+        live_workload_target_validation = ControlPlaneLiveWorkloadTargetValidationService(
+            settings=self.settings,
+            job_repository=self.job_repository,
+            job_service=None,
+            live_workload_drift_proof_service=None,
+        ).build_summary()
+        live_workload_proof_validation = ControlPlaneLiveWorkloadProofValidationService(
+            job_repository=self.job_repository,
+            environment_name=self.settings.environment_name,
+            due_soon_age_hours=self.settings.analytics_live_workload_proof_due_soon_age_hours,
+            warning_age_hours=self.settings.analytics_live_workload_proof_warning_age_hours,
+            critical_age_hours=self.settings.analytics_live_workload_proof_critical_age_hours,
+        ).build_summary()
+        backup_validation = ControlPlaneBackupValidationService(
+            job_repository=self.job_repository,
+            environment_name=self.settings.environment_name,
+            due_soon_age_hours=self.settings.analytics_backup_rehearsal_due_soon_age_hours,
+            warning_age_hours=self.settings.analytics_backup_rehearsal_warning_age_hours,
+            critical_age_hours=self.settings.analytics_backup_rehearsal_critical_age_hours,
+        ).build_summary()
+        backup_export_validation = ControlPlaneBackupOperationsService(
+            settings=self.settings,
+            backup_service=None,
+            job_repository=self.job_repository,
+            job_service=None,
+        ).latest_backup_export_validation()
+        observability_export_validation = ControlPlaneObservabilityExportService(
+            settings=self.settings,
+            job_service=self.job_repository,
+            analytics_service=None,
+            metrics_service=None,
+            privileged_api_audit_service=None,
+        ).latest_export_validation()
         review_service = ControlPlaneRuntimeValidationReviewService(
             settings=self.settings,
             job_service=None,
@@ -197,6 +270,40 @@ class ControlPlaneCutoverReadinessService:
                 blockers.append(runtime_validation_code)
             else:
                 warnings.append(runtime_validation_code)
+        if live_workload_target_validation.status != "passed":
+            live_workload_target_code = (
+                f"live_workload_target_validation_{live_workload_target_validation.status}"
+            )
+            if effective_require_live_workload_target_validation:
+                blockers.append(live_workload_target_code)
+            else:
+                warnings.append(live_workload_target_code)
+        if live_workload_proof_validation.status != "passed":
+            live_workload_code = f"live_workload_proof_validation_{live_workload_proof_validation.status}"
+            if effective_require_live_workload_proof_validation:
+                blockers.append(live_workload_code)
+            else:
+                warnings.append(live_workload_code)
+        if backup_validation.status != "passed":
+            backup_validation_code = f"backup_validation_{backup_validation.status}"
+            if effective_require_backup_validation:
+                blockers.append(backup_validation_code)
+            else:
+                warnings.append(backup_validation_code)
+        if backup_export_validation.status != "passed":
+            backup_export_validation_code = f"backup_export_validation_{backup_export_validation.status}"
+            if effective_require_backup_validation:
+                blockers.append(backup_export_validation_code)
+            else:
+                warnings.append(backup_export_validation_code)
+        if observability_export_validation.status != "passed":
+            observability_validation_code = (
+                f"observability_export_validation_{observability_export_validation.status}"
+            )
+            if effective_require_observability_validation:
+                blockers.append(observability_validation_code)
+            else:
+                warnings.append(observability_validation_code)
         if pending_change_control_requests:
             blockers.append("runtime_validation_change_control_pending")
         if rejected_change_control_requests:
@@ -211,9 +318,17 @@ class ControlPlaneCutoverReadinessService:
             rehearsal_max_age_hours=rehearsal_max_age_hours,
             require_apply_rehearsal=require_apply_rehearsal,
             require_runtime_validation=effective_require_runtime_validation,
+            require_live_workload_target_validation=effective_require_live_workload_target_validation,
+            require_live_workload_proof_validation=effective_require_live_workload_proof_validation,
+            require_backup_validation=effective_require_backup_validation,
             latest_bundle_event=latest_bundle_event,
             latest_rehearsal_event=latest_rehearsal_event,
             runtime_validation=runtime_validation.to_dict(),
+            live_workload_target_validation=live_workload_target_validation.to_dict(),
+            live_workload_proof_validation=live_workload_proof_validation.to_dict(),
+            backup_validation=backup_validation.to_dict(),
+            backup_export_validation=backup_export_validation.to_dict(),
+            observability_export_validation=observability_export_validation.to_dict(),
             runtime_validation_change_control_requests=runtime_validation_change_control_requests,
             package_inspection=package_inspection,
             blockers=blockers,

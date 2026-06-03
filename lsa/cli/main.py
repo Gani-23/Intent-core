@@ -13,29 +13,55 @@ from lsa.drift.ebpf_observer import ObservationResult
 from lsa.drift.models import ObservedEvent
 from lsa.drift.signal_processor import load_events
 from lsa.drift.trace_parser import load_trace_events
-from lsa.remediation.llm_client import RuleBasedLLMClient
+from lsa.remediation.llm_client import build_remediation_client
 from lsa.services.audit_service import AuditService
 from lsa.services.analytics_service import AnalyticsService, ControlPlaneAlertThresholds
 from lsa.services.control_plane_alert_service import ControlPlaneAlertService
+from lsa.services.control_plane_authorization_service import ControlPlaneAuthorizationService
+from lsa.services.control_plane_backup_rehearsal_service import ControlPlaneBackupRehearsalService
+from lsa.services.control_plane_backup_operations_service import ControlPlaneBackupOperationsService
 from lsa.services.control_plane_backup_service import ControlPlaneBackupService
+from lsa.services.control_plane_backup_validation_service import ControlPlaneBackupValidationService
+from lsa.services.control_plane_canary_verifier_service import ControlPlaneCanaryVerifierService
 from lsa.services.control_plane_cutover_promotion_service import ControlPlaneCutoverPromotionService
 from lsa.services.control_plane_cutover_service import ControlPlaneCutoverService
 from lsa.services.control_plane_cutover_readiness_service import ControlPlaneCutoverReadinessService
 from lsa.services.control_plane_deployment_readiness_service import ControlPlaneDeploymentReadinessService
+from lsa.services.control_plane_incident_narrative_service import ControlPlaneIncidentNarrativeService
+from lsa.services.control_plane_live_workload_proof_validation_service import (
+    ControlPlaneLiveWorkloadProofValidationService,
+)
+from lsa.services.control_plane_live_workload_target_validation_service import (
+    ControlPlaneLiveWorkloadTargetValidationService,
+)
 from lsa.services.control_plane_maintenance_service import ControlPlaneMaintenanceService
+from lsa.services.control_plane_operational_validation_service import ControlPlaneOperationalValidationService
+from lsa.services.control_plane_operational_validation_evidence_service import ControlPlaneOperationalValidationEvidenceService
+from lsa.services.control_plane_soak_validation_service import ControlPlaneSoakValidationService
+from lsa.services.control_plane_soak_validation_evidence_service import ControlPlaneSoakValidationEvidenceService
+from lsa.services.control_plane_observability_export_service import ControlPlaneObservabilityExportService
+from lsa.services.control_plane_queue_validation_service import ControlPlaneQueueValidationService
 from lsa.services.control_plane_runtime_rehearsal_service import ControlPlaneRuntimeRehearsalService
 from lsa.services.control_plane_runtime_smoke_service import ControlPlaneRuntimeSmokeService
 from lsa.services.control_plane_runtime_validation_service import ControlPlaneRuntimeValidationService
 from lsa.services.control_plane_runtime_validation_review_service import (
     ControlPlaneRuntimeValidationReviewService,
 )
+from lsa.services.control_plane_trust_score_service import ControlPlaneTrustScoreService
+from lsa.services.control_plane_workload_validation_service import ControlPlaneWorkloadValidationService
+from lsa.services.control_plane_worker_recovery_validation_service import ControlPlaneWorkerRecoveryValidationService
 from lsa.services.ingest_service import IngestService
 from lsa.services.job_service import JobService
+from lsa.services.live_workload_drift_proof_service import LiveWorkloadDriftProofService
+from lsa.services.live_workload_proof_bundle_service import LiveWorkloadProofBundleService
+from lsa.services.live_workload_target_profile_service import LiveWorkloadTargetProfileService
 from lsa.services.metrics_service import ControlPlaneMetricsService
+from lsa.services.privileged_api_audit_service import PrivilegedApiAuditService
 from lsa.services.postgres_bootstrap_service import PostgresBootstrapService
 from lsa.services.postgres_cutover_rehearsal_service import PostgresCutoverRehearsalService
 from lsa.services.postgres_runtime_shadow_service import PostgresRuntimeShadowService
 from lsa.services.postgres_target_service import PostgresTargetService
+from lsa.services.remediation_index_service import RemediationIndexService
 from lsa.services.runtime_validation_policy import RuntimeValidationPolicy, load_runtime_validation_policy_bundle
 from lsa.services.trace_collection_service import TraceCollectionRequest, TraceCollectionService
 from lsa.settings import resolve_workspace_settings
@@ -50,13 +76,18 @@ snapshot_repository = runtime_bundle.snapshot_repository
 audit_repository = runtime_bundle.audit_repository
 job_repository = runtime_bundle.job_repository
 ingest_service = IngestService(graph=graph, snapshot_repository=snapshot_repository)
+remediation_index_service = RemediationIndexService(
+    settings.remediation_index_path,
+    environment_name=settings.environment_name,
+)
 audit_service = AuditService(
     graph=graph,
     snapshot_repository=snapshot_repository,
     audit_repository=audit_repository,
     drift_comparator=DriftComparator(),
-    remediation_client=RuleBasedLLMClient(),
+    remediation_client=build_remediation_client(settings),
     settings=settings,
+    remediation_index_service=remediation_index_service,
 )
 trace_collection_service = TraceCollectionService(settings=settings)
 analytics_service = AnalyticsService(
@@ -81,10 +112,30 @@ analytics_service = AnalyticsService(
         runtime_rehearsal_due_soon_age_hours=settings.analytics_runtime_rehearsal_due_soon_age_hours,
         runtime_rehearsal_warning_age_hours=settings.analytics_runtime_rehearsal_warning_age_hours,
         runtime_rehearsal_critical_age_hours=settings.analytics_runtime_rehearsal_critical_age_hours,
+        live_workload_proof_due_soon_age_hours=settings.analytics_live_workload_proof_due_soon_age_hours,
+        live_workload_proof_warning_age_hours=settings.analytics_live_workload_proof_warning_age_hours,
+        live_workload_proof_critical_age_hours=settings.analytics_live_workload_proof_critical_age_hours,
+        backup_rehearsal_due_soon_age_hours=settings.analytics_backup_rehearsal_due_soon_age_hours,
+        backup_rehearsal_warning_age_hours=settings.analytics_backup_rehearsal_warning_age_hours,
+        backup_rehearsal_critical_age_hours=settings.analytics_backup_rehearsal_critical_age_hours,
+        backup_export_warning_age_hours=settings.analytics_backup_export_warning_age_hours,
+        backup_export_critical_age_hours=settings.analytics_backup_export_critical_age_hours,
+        observability_export_warning_age_hours=settings.analytics_observability_export_warning_age_hours,
+        observability_export_critical_age_hours=settings.analytics_observability_export_critical_age_hours,
+        privileged_api_audit_non_ok_warning_threshold=settings.analytics_privileged_api_audit_non_ok_warning_threshold,
+        privileged_api_audit_non_ok_critical_threshold=settings.analytics_privileged_api_audit_non_ok_critical_threshold,
     ),
     runtime_validation_policy_path=str(settings.runtime_validation_policy_path),
     runtime_validation_reminder_interval_seconds=settings.control_plane_alert_reminder_interval_seconds,
     runtime_validation_escalation_interval_seconds=settings.control_plane_alert_escalation_interval_seconds,
+    privileged_api_audit_service=PrivilegedApiAuditService(settings.privileged_api_audit_log_path),
+)
+authorization_service = ControlPlaneAuthorizationService(
+    organization_name=settings.organization_name,
+    environment_name=settings.environment_name,
+    admin_roles=settings.authz_admin_roles,
+    authz_enabled=settings.authz_enabled,
+    allowed_organizations=settings.authz_allowed_organizations,
 )
 control_plane_alert_service = ControlPlaneAlertService(
     job_repository=job_repository,
@@ -102,6 +153,7 @@ control_plane_alert_service = ControlPlaneAlertService(
     webhook_url=settings.control_plane_alert_webhook_url,
     escalation_webhook_url=settings.control_plane_alert_escalation_webhook_url,
     deployment_rejected_change_control_critical_age_hours=settings.analytics_deployment_rejected_change_control_critical_age_hours,
+    authorization_service=authorization_service,
 )
 control_plane_backup_service = ControlPlaneBackupService(
     settings=settings,
@@ -121,8 +173,19 @@ job_service = JobService(
     control_plane_alert_service=control_plane_alert_service,
     control_plane_alert_interval_seconds=settings.control_plane_alert_interval_seconds,
     control_plane_alerts_enabled=settings.control_plane_alerts_enabled,
+    observability_export_interval_seconds=settings.observability_export_interval_seconds,
+    live_workload_target_validation_interval_seconds=settings.live_workload_target_validation_interval_seconds,
+    operational_validation_interval_seconds=settings.operational_validation_interval_seconds,
     deployment_readiness_required_for_job_submission=settings.job_submission_deployment_readiness_required,
+    authorization_service=authorization_service,
 )
+control_plane_backup_operations_service = ControlPlaneBackupOperationsService(
+    settings=settings,
+    backup_service=control_plane_backup_service,
+    job_repository=job_repository,
+    job_service=job_service,
+)
+job_service.control_plane_backup_operations_service = control_plane_backup_operations_service
 runtime_validation_review_service = ControlPlaneRuntimeValidationReviewService(
     settings=settings,
     job_service=job_service,
@@ -145,6 +208,14 @@ metrics_service = ControlPlaneMetricsService(
     environment_name=settings.environment_name,
     worker_mode="standalone",
 )
+control_plane_observability_export_service = ControlPlaneObservabilityExportService(
+    settings=settings,
+    job_service=job_service,
+    analytics_service=analytics_service,
+    metrics_service=metrics_service,
+    privileged_api_audit_service=PrivilegedApiAuditService(settings.privileged_api_audit_log_path),
+)
+job_service.control_plane_observability_export_service = control_plane_observability_export_service
 control_plane_maintenance_service = ControlPlaneMaintenanceService(
     settings=settings,
     job_repository=job_repository,
@@ -190,18 +261,12 @@ def _postgres_runtime_shadow_service() -> PostgresRuntimeShadowService:
 
 
 def _control_plane_runtime_smoke_service() -> ControlPlaneRuntimeSmokeService:
-    snapshot_backend = str(snapshot_repository.database.config.backend)
-    audit_backend = str(audit_repository.database.config.backend)
-    job_backend = str(job_repository.database.config.backend)
-    backends = {snapshot_backend, audit_backend, job_backend}
     return ControlPlaneRuntimeSmokeService(
         settings=settings,
         snapshot_repository=snapshot_repository,
         audit_repository=audit_repository,
         job_repository=job_repository,
         job_service=job_service,
-        repository_layout="mixed" if len(backends) > 1 else "shared",
-        mixed_backends=len(backends) > 1,
         now_factory=lambda: datetime.now().astimezone().isoformat(),
     )
 
@@ -212,6 +277,15 @@ def _control_plane_runtime_rehearsal_service() -> ControlPlaneRuntimeRehearsalSe
         job_repository=job_repository,
         job_service=job_service,
         runtime_smoke_service=_control_plane_runtime_smoke_service(),
+        now_factory=lambda: datetime.now().astimezone().isoformat(),
+    )
+
+
+def _control_plane_backup_rehearsal_service() -> ControlPlaneBackupRehearsalService:
+    return ControlPlaneBackupRehearsalService(
+        settings=settings,
+        backup_service=control_plane_backup_service,
+        job_service=job_service,
         now_factory=lambda: datetime.now().astimezone().isoformat(),
     )
 
@@ -243,8 +317,188 @@ def _control_plane_runtime_validation_service() -> ControlPlaneRuntimeValidation
     )
 
 
+def _control_plane_backup_validation_service() -> ControlPlaneBackupValidationService:
+    return ControlPlaneBackupValidationService(
+        job_repository=job_repository,
+        environment_name=settings.environment_name,
+        due_soon_age_hours=settings.analytics_backup_rehearsal_due_soon_age_hours,
+        warning_age_hours=settings.analytics_backup_rehearsal_warning_age_hours,
+        critical_age_hours=settings.analytics_backup_rehearsal_critical_age_hours,
+    )
+
+
+def _control_plane_live_workload_proof_validation_service() -> ControlPlaneLiveWorkloadProofValidationService:
+    return ControlPlaneLiveWorkloadProofValidationService(
+        job_repository=job_repository,
+        environment_name=settings.environment_name,
+        due_soon_age_hours=settings.analytics_live_workload_proof_due_soon_age_hours,
+        warning_age_hours=settings.analytics_live_workload_proof_warning_age_hours,
+        critical_age_hours=settings.analytics_live_workload_proof_critical_age_hours,
+    )
+
+
+def _control_plane_live_workload_target_validation_service() -> ControlPlaneLiveWorkloadTargetValidationService:
+    return ControlPlaneLiveWorkloadTargetValidationService(
+        settings=settings,
+        job_repository=job_repository,
+        job_service=job_service,
+        live_workload_drift_proof_service=_live_workload_drift_proof_service(),
+    )
+
+
+def _live_workload_target_profile_service() -> LiveWorkloadTargetProfileService:
+    return LiveWorkloadTargetProfileService(settings)
+
+
+def _live_workload_proof_bundle_service() -> LiveWorkloadProofBundleService:
+    return LiveWorkloadProofBundleService(
+        settings=settings,
+        job_repository=job_repository,
+        job_service=job_service,
+        target_validation_service=_control_plane_live_workload_target_validation_service(),
+        proof_validation_service=_control_plane_live_workload_proof_validation_service(),
+        operational_validation_evidence_service=_control_plane_operational_validation_evidence_service(),
+        target_profile_service=_live_workload_target_profile_service(),
+    )
+
+
+
+
+def _control_plane_backup_operations_service() -> ControlPlaneBackupOperationsService:
+    return control_plane_backup_operations_service
+
+
+def _control_plane_observability_export_service() -> ControlPlaneObservabilityExportService:
+    return control_plane_observability_export_service
+
+
+def _control_plane_operational_validation_service() -> ControlPlaneOperationalValidationService:
+    return ControlPlaneOperationalValidationService(
+        settings=settings,
+        job_service=job_service,
+        runtime_rehearsal_service=_control_plane_runtime_rehearsal_service(),
+        backup_rehearsal_service=_control_plane_backup_rehearsal_service(),
+        backup_operations_service=_control_plane_backup_operations_service(),
+        backup_validation_service=_control_plane_backup_validation_service(),
+        live_workload_drift_proof_service=_live_workload_drift_proof_service(),
+        live_workload_target_validation_service=_control_plane_live_workload_target_validation_service(),
+        live_workload_proof_validation_service=_control_plane_live_workload_proof_validation_service(),
+        observability_export_service=_control_plane_observability_export_service(),
+        queue_validation_service=_control_plane_queue_validation_service(),
+        workload_validation_service=_control_plane_workload_validation_service(),
+        worker_recovery_validation_service=_control_plane_worker_recovery_validation_service(),
+        deployment_readiness_service=_control_plane_deployment_readiness_service(),
+        now_factory=lambda: datetime.now().astimezone().isoformat(),
+    )
+
+
+def _control_plane_operational_validation_evidence_service() -> ControlPlaneOperationalValidationEvidenceService:
+    return ControlPlaneOperationalValidationEvidenceService(
+        job_repository=job_repository,
+        environment_name=settings.environment_name,
+        warning_age_hours=settings.analytics_operational_validation_warning_age_hours,
+        critical_age_hours=settings.analytics_operational_validation_critical_age_hours,
+    )
+
+
+def _control_plane_soak_validation_service() -> ControlPlaneSoakValidationService:
+    return ControlPlaneSoakValidationService(
+        settings=settings,
+        job_service=job_service,
+        operational_validation_service=_control_plane_operational_validation_service(),
+        now_factory=lambda: datetime.now().astimezone().isoformat(),
+    )
+
+
+def _control_plane_soak_validation_evidence_service() -> ControlPlaneSoakValidationEvidenceService:
+    return ControlPlaneSoakValidationEvidenceService(
+        job_repository=job_repository,
+        environment_name=settings.environment_name,
+        warning_age_hours=settings.analytics_operational_validation_warning_age_hours,
+        critical_age_hours=settings.analytics_operational_validation_critical_age_hours,
+    )
+
+
+def _control_plane_trust_score_service() -> ControlPlaneTrustScoreService:
+    return ControlPlaneTrustScoreService(
+        settings=settings,
+        runtime_validation_service=_control_plane_runtime_validation_service(),
+        live_workload_target_validation_service=_control_plane_live_workload_target_validation_service(),
+        live_workload_proof_validation_service=_control_plane_live_workload_proof_validation_service(),
+        operational_validation_evidence_service=_control_plane_operational_validation_evidence_service(),
+        soak_validation_evidence_service=_control_plane_soak_validation_evidence_service(),
+        backup_validation_service=_control_plane_backup_validation_service(),
+        backup_operations_service=_control_plane_backup_operations_service(),
+        observability_export_service=_control_plane_observability_export_service(),
+        deployment_readiness_service=_control_plane_deployment_readiness_service(),
+        runtime_validation_review_service=runtime_validation_review_service,
+    )
+
+
+def _control_plane_incident_narrative_service() -> ControlPlaneIncidentNarrativeService:
+    return ControlPlaneIncidentNarrativeService(
+        settings=settings,
+        job_repository=job_repository,
+        deployment_readiness_service=_control_plane_deployment_readiness_service(),
+        trust_score_service=_control_plane_trust_score_service(),
+    )
+
+
+def _control_plane_canary_verifier_service() -> ControlPlaneCanaryVerifierService:
+    return ControlPlaneCanaryVerifierService(
+        settings=settings,
+        job_service=job_service,
+        live_workload_target_validation_service=_control_plane_live_workload_target_validation_service(),
+        live_workload_drift_proof_service=_live_workload_drift_proof_service(),
+        runtime_rehearsal_service=_control_plane_runtime_rehearsal_service(),
+        deployment_readiness_service=_control_plane_deployment_readiness_service(),
+        now_factory=lambda: datetime.now().astimezone().isoformat(),
+    )
+
+
+def _control_plane_queue_validation_service() -> ControlPlaneQueueValidationService:
+    return ControlPlaneQueueValidationService(
+        settings=settings,
+        job_service=job_service,
+        now_factory=lambda: datetime.now().astimezone().isoformat(),
+    )
+
+
+def _control_plane_workload_validation_service() -> ControlPlaneWorkloadValidationService:
+    return ControlPlaneWorkloadValidationService(
+        settings=settings,
+        job_service=job_service,
+        queue_validation_service=_control_plane_queue_validation_service(),
+        now_factory=lambda: datetime.now().astimezone().isoformat(),
+    )
+
+
+def _control_plane_worker_recovery_validation_service() -> ControlPlaneWorkerRecoveryValidationService:
+    return ControlPlaneWorkerRecoveryValidationService(
+        settings=settings,
+        job_service=job_service,
+        now_factory=lambda: datetime.now().astimezone().isoformat(),
+    )
+
+
+def _live_workload_drift_proof_service() -> LiveWorkloadDriftProofService:
+    return LiveWorkloadDriftProofService(
+        settings=settings,
+        ingest_service=ingest_service,
+        audit_service=audit_service,
+        job_service=job_service,
+    )
+
+
+job_service.live_workload_target_validation_service = _control_plane_live_workload_target_validation_service()
+
+
 def _control_plane_deployment_readiness_service() -> ControlPlaneDeploymentReadinessService:
     return deployment_readiness_service
+
+
+job_service.operational_validation_service = _control_plane_operational_validation_service()
+job_service.operational_validation_evidence_service = _control_plane_operational_validation_evidence_service()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -311,6 +565,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("list-snapshots", help="List persisted snapshot records.")
     subparsers.add_parser("list-audits", help="List persisted audit records.")
+    list_remediation_reports = subparsers.add_parser("list-remediation-reports", help="List indexed remediation reports.")
+    list_remediation_reports.add_argument("--limit", type=int, default=100)
+    list_remediation_reports.add_argument("--function", default=None)
+    list_remediation_reports.add_argument("--risk", default=None)
+    list_remediation_reports.add_argument("--environment-name", default=None)
     subparsers.add_parser("list-jobs", help="List persisted job records.")
     subparsers.add_parser("list-workers", help="List persisted worker records.")
     worker_heartbeats = subparsers.add_parser("list-worker-heartbeats", help="List recorded heartbeats for a worker.")
@@ -354,20 +613,245 @@ def build_parser() -> argparse.ArgumentParser:
     control_plane_runtime_smoke.add_argument("--keep-artifacts", action="store_true")
     control_plane_runtime_rehearsal = subparsers.add_parser(
         "run-control-plane-runtime-rehearsal",
-        help="Verify that the live control-plane runtime matches the expected backend/layout and passes a smoke check.",
+        help="Verify that the live control-plane runtime matches the expected backend and passes a smoke check.",
     )
     control_plane_runtime_rehearsal.add_argument("--by", required=True)
     control_plane_runtime_rehearsal.add_argument("--expected-backend", default="postgres")
-    control_plane_runtime_rehearsal.add_argument("--expected-layout", default="shared")
     control_plane_runtime_rehearsal.add_argument("--reason", default=None)
     control_plane_runtime_rehearsal.add_argument("--keep-artifacts", action="store_true")
+    control_plane_runtime_rehearsal.add_argument("--ignore-deployment-readiness", action="store_true")
+    control_plane_backup_rehearsal = subparsers.add_parser(
+        "run-control-plane-backup-rehearsal",
+        help="Export, restore, and verify a control-plane backup in an isolated rehearsal workspace.",
+    )
+    control_plane_backup_rehearsal.add_argument("--by", required=True)
+    control_plane_backup_rehearsal.add_argument("--reason", default=None)
+    control_plane_backup_rehearsal.add_argument("--keep-artifacts", action="store_true")
+    control_plane_operational_validation = subparsers.add_parser(
+        "run-control-plane-operational-validation",
+        help="Run runtime proof, backup proof, backup freshness, and readiness as one operational validation flow.",
+    )
+    control_plane_operational_validation.add_argument("--by", required=True)
+    control_plane_operational_validation.add_argument("--expected-backend", default="postgres")
+    control_plane_operational_validation.add_argument("--reason", default=None)
+    control_plane_operational_validation.add_argument("--skip-backup-processing", action="store_true")
+    control_plane_operational_validation.add_argument("--keep-artifacts", action="store_true")
+    control_plane_operational_validation.add_argument("--skip-queue-validation", action="store_true")
+    control_plane_operational_validation.add_argument("--skip-workload-validation", action="store_true")
+    control_plane_operational_validation.add_argument("--skip-live-workload-drift-proof", action="store_true")
+    control_plane_operational_validation.add_argument("--skip-worker-recovery-validation", action="store_true")
+    control_plane_operational_validation.add_argument("--queue-success-jobs", type=int, default=2)
+    control_plane_operational_validation.add_argument("--queue-failure-jobs", type=int, default=1)
+    control_plane_operational_validation.add_argument("--queue-delay-seconds", type=float, default=0.0)
+    control_plane_operational_validation.add_argument("--no-inline-queue-worker", action="store_true")
+    control_plane_operational_validation.add_argument("--workload-rounds", type=int, default=3)
+    control_plane_operational_validation.add_argument("--workload-maintenance-pause-jobs", type=int, default=3)
+    control_plane_operational_validation.add_argument("--skip-maintenance-pause-injection", action="store_true")
+    control_plane_soak_validation = subparsers.add_parser(
+        "run-control-plane-soak-validation",
+        help="Run repeated operational validation iterations and persist soak evidence.",
+    )
+    control_plane_soak_validation.add_argument("--by", required=True)
+    control_plane_soak_validation.add_argument("--expected-backend", default="postgres")
+    control_plane_soak_validation.add_argument("--reason", default=None)
+    control_plane_soak_validation.add_argument("--target-profile", default=None)
+    control_plane_soak_validation.add_argument("--iterations", type=int, default=3)
+    control_plane_soak_validation.add_argument("--pause-seconds", type=float, default=2.0)
+    control_plane_soak_validation.add_argument("--skip-backup-processing", action="store_true")
+    control_plane_soak_validation.add_argument("--keep-artifacts", action="store_true")
+    control_plane_soak_validation.add_argument("--skip-queue-validation", action="store_true")
+    control_plane_soak_validation.add_argument("--skip-workload-validation", action="store_true")
+    control_plane_soak_validation.add_argument("--skip-live-workload-drift-proof", action="store_true")
+    control_plane_soak_validation.add_argument("--skip-worker-recovery-validation", action="store_true")
+    control_plane_soak_validation.add_argument("--queue-success-jobs", type=int, default=2)
+    control_plane_soak_validation.add_argument("--queue-failure-jobs", type=int, default=1)
+    control_plane_soak_validation.add_argument("--queue-delay-seconds", type=float, default=0.0)
+    control_plane_soak_validation.add_argument("--no-inline-queue-worker", action="store_true")
+    control_plane_soak_validation.add_argument("--workload-rounds", type=int, default=3)
+    control_plane_soak_validation.add_argument("--workload-maintenance-pause-jobs", type=int, default=3)
+    control_plane_soak_validation.add_argument("--skip-maintenance-pause-injection", action="store_true")
+    control_plane_queue_validation = subparsers.add_parser(
+        "run-control-plane-queue-validation",
+        help="Run a synthetic queue/worker drill using noop validation jobs.",
+    )
+    control_plane_queue_validation.add_argument("--by", required=True)
+    control_plane_queue_validation.add_argument("--reason", default=None)
+    control_plane_queue_validation.add_argument("--queue-success-jobs", type=int, default=2)
+    control_plane_queue_validation.add_argument("--queue-failure-jobs", type=int, default=1)
+    control_plane_queue_validation.add_argument("--queue-delay-seconds", type=float, default=0.0)
+    control_plane_queue_validation.add_argument("--no-inline-queue-worker", action="store_true")
+    live_workload_drift_proof = subparsers.add_parser(
+        "run-live-workload-drift-proof",
+        help="Run the sample workload live, emit collector-style traces, and prove drift detection end to end.",
+    )
+    live_workload_drift_proof.add_argument("--by", required=True)
+    live_workload_drift_proof.add_argument("--reason", default=None)
+    live_workload_drift_proof.add_argument("--no-persist", action="store_true")
+    live_workload_drift_proof.add_argument("--snapshot-id", default=None)
+    live_workload_drift_proof.add_argument("--audit-id", default=None)
+    subparsers.add_parser(
+        "control-plane-live-workload-target-validation",
+        help="Probe the currently configured live workload proof targets and report whether they are reachable.",
+    )
+    run_live_workload_target_validation = subparsers.add_parser(
+        "run-control-plane-live-workload-target-validation",
+        help="Probe live workload proof targets, persist evidence, and report the result.",
+    )
+    run_live_workload_target_validation.add_argument("--by", required=True)
+    run_live_workload_target_validation.add_argument("--reason", default=None)
+    run_live_workload_target_validation.add_argument("--timeout-seconds", type=float, default=10.0)
+    run_live_workload_target_profile_validation = subparsers.add_parser(
+        "run-live-workload-target-profile-validation",
+        help="Probe a named live workload target profile and persist the result.",
+    )
+    run_live_workload_target_profile_validation.add_argument("--profile", required=True)
+    run_live_workload_target_profile_validation.add_argument("--by", required=True)
+    run_live_workload_target_profile_validation.add_argument("--reason", default=None)
+    run_live_workload_target_profile_validation.add_argument("--timeout-seconds", type=float, default=10.0)
+    run_live_workload_target_profile_drift_proof = subparsers.add_parser(
+        "run-live-workload-target-profile-drift-proof",
+        help="Run live workload drift proof against a named target profile.",
+    )
+    run_live_workload_target_profile_drift_proof.add_argument("--profile", required=True)
+    run_live_workload_target_profile_drift_proof.add_argument("--by", required=True)
+    run_live_workload_target_profile_drift_proof.add_argument("--reason", default=None)
+    run_live_workload_target_profile_drift_proof.add_argument("--no-persist", action="store_true")
+    run_live_workload_target_profile_drift_proof.add_argument("--snapshot-id", default=None)
+    run_live_workload_target_profile_drift_proof.add_argument("--audit-id", default=None)
+    run_live_workload_target_profile_operational_validation = subparsers.add_parser(
+        "run-live-workload-target-profile-operational-validation",
+        help="Run one-shot operational validation against a named live workload target profile.",
+    )
+    run_live_workload_target_profile_operational_validation.add_argument("--profile", required=True)
+    run_live_workload_target_profile_operational_validation.add_argument("--by", required=True)
+    run_live_workload_target_profile_operational_validation.add_argument("--expected-backend", default="postgres")
+    run_live_workload_target_profile_operational_validation.add_argument("--reason", default=None)
+    run_live_workload_target_profile_operational_validation.add_argument("--skip-backup-processing", action="store_true")
+    run_live_workload_target_profile_operational_validation.add_argument("--no-cleanup", action="store_true")
+    run_live_workload_target_profile_operational_validation.add_argument("--skip-queue-validation", action="store_true")
+    run_live_workload_target_profile_operational_validation.add_argument("--skip-workload-validation", action="store_true")
+    run_live_workload_target_profile_operational_validation.add_argument("--skip-worker-recovery-validation", action="store_true")
+    run_live_workload_target_profile_operational_validation.add_argument("--skip-live-workload-drift-proof", action="store_true")
+    run_live_workload_target_profile_operational_validation.add_argument("--queue-success-jobs", type=int, default=2)
+    run_live_workload_target_profile_operational_validation.add_argument("--queue-failure-jobs", type=int, default=1)
+    run_live_workload_target_profile_operational_validation.add_argument("--queue-delay-seconds", type=float, default=0.0)
+    run_live_workload_target_profile_operational_validation.add_argument("--no-inline-queue-worker", action="store_true")
+    run_live_workload_target_profile_operational_validation.add_argument("--workload-rounds", type=int, default=3)
+    run_live_workload_target_profile_canary_verify = subparsers.add_parser(
+        "run-live-workload-target-profile-canary-verify",
+        help="Run target validation, drift proof, and operational validation as one canary promotion verdict.",
+    )
+    run_live_workload_target_profile_canary_verify.add_argument("--profile", required=True)
+    run_live_workload_target_profile_canary_verify.add_argument("--by", required=True)
+    run_live_workload_target_profile_canary_verify.add_argument("--expected-backend", default="postgres")
+    run_live_workload_target_profile_canary_verify.add_argument("--reason", default=None)
+    run_live_workload_target_profile_canary_verify.add_argument("--skip-backup-processing", action="store_true")
+    run_live_workload_target_profile_canary_verify.add_argument("--no-cleanup", action="store_true")
+    run_live_workload_target_profile_canary_verify.add_argument("--skip-queue-validation", action="store_true")
+    run_live_workload_target_profile_canary_verify.add_argument("--skip-workload-validation", action="store_true")
+    run_live_workload_target_profile_canary_verify.add_argument("--skip-worker-recovery-validation", action="store_true")
+    run_live_workload_target_profile_canary_verify.add_argument("--queue-success-jobs", type=int, default=2)
+    run_live_workload_target_profile_canary_verify.add_argument("--queue-failure-jobs", type=int, default=1)
+    run_live_workload_target_profile_canary_verify.add_argument("--queue-delay-seconds", type=float, default=0.0)
+    run_live_workload_target_profile_canary_verify.add_argument("--no-inline-queue-worker", action="store_true")
+    run_live_workload_target_profile_canary_verify.add_argument("--workload-rounds", type=int, default=3)
+    run_live_workload_target_profile_canary_verify.add_argument("--workload-maintenance-pause-jobs", type=int, default=3)
+    run_live_workload_target_profile_canary_verify.add_argument("--skip-maintenance-pause-injection", action="store_true")
+    run_live_workload_target_profile_operational_validation.add_argument("--workload-maintenance-pause-jobs", type=int, default=3)
+    run_live_workload_target_profile_operational_validation.add_argument("--skip-maintenance-pause-injection", action="store_true")
+    subparsers.add_parser(
+        "list-live-workload-target-profiles",
+        help="List built-in and file-backed live workload target profiles.",
+    )
+    export_live_workload_proof_bundle = subparsers.add_parser(
+        "export-live-workload-proof-bundle",
+        help="Export a portable bundle with latest target validation, drift proof, and operational validation evidence.",
+    )
+    export_live_workload_proof_bundle.add_argument("--by", required=True)
+    export_live_workload_proof_bundle.add_argument("--reason", default=None)
+    subparsers.add_parser(
+        "list-live-workload-proof-bundles",
+        help="List exported live workload proof bundles.",
+    )
+    inspect_live_workload_proof_bundle = subparsers.add_parser(
+        "inspect-live-workload-proof-bundle",
+        help="Inspect an exported live workload proof bundle for metadata and integrity.",
+    )
+    inspect_live_workload_proof_bundle.add_argument("--path", required=True)
+    prune_live_workload_proof_bundles = subparsers.add_parser(
+        "prune-live-workload-proof-bundles",
+        help="Prune exported live workload proof bundles older than the retention window.",
+    )
+    prune_live_workload_proof_bundles.add_argument("--by", required=True)
+    prune_live_workload_proof_bundles.add_argument("--reason", default=None)
+    prune_live_workload_proof_bundles.add_argument("--retention-days", type=int, default=None)
+    delete_live_workload_proof_bundle = subparsers.add_parser(
+        "delete-live-workload-proof-bundle",
+        help="Delete a specific exported live workload proof bundle.",
+    )
+    delete_live_workload_proof_bundle.add_argument("--path", required=True)
+    delete_live_workload_proof_bundle.add_argument("--by", required=True)
+    delete_live_workload_proof_bundle.add_argument("--reason", default=None)
     subparsers.add_parser(
         "control-plane-runtime-validation",
         help="Show the latest runtime rehearsal evidence and whether it is missing, stale, failed, or healthy.",
     )
     subparsers.add_parser(
+        "control-plane-backup-validation",
+        help="Show the latest backup rehearsal evidence and whether it is missing, stale, failed, or healthy.",
+    )
+    subparsers.add_parser(
+        "control-plane-live-workload-proof-validation",
+        help="Show the latest live workload drift proof evidence and whether it is missing, stale, failed, or healthy.",
+    )
+    subparsers.add_parser(
+        "control-plane-operational-validation-status",
+        help="Show the latest operational validation evidence and whether it is fresh, stale, failed, or missing.",
+    )
+    subparsers.add_parser(
+        "control-plane-soak-validation-status",
+        help="Show the latest soak validation evidence and whether it is fresh, stale, failed, or missing.",
+    )
+    subparsers.add_parser(
+        "control-plane-observability-export-validation",
+        help="Show the latest observability export freshness state for the active environment.",
+    )
+    observability_export = subparsers.add_parser(
+        "export-control-plane-observability",
+        help="Export control-plane analytics, metrics, maintenance, alerts, and privileged audit summary as a JSON snapshot.",
+    )
+    observability_export.add_argument("--by", required=True)
+    observability_export.add_argument("--reason", default=None)
+    subparsers.add_parser(
+        "list-control-plane-observability-exports",
+        help="List exported control-plane observability snapshots.",
+    )
+    subparsers.add_parser(
+        "control-plane-backup-export-validation",
+        help="Show the latest backup export freshness state for the active environment.",
+    )
+    subparsers.add_parser(
+        "list-control-plane-backups",
+        help="List exported control-plane backup bundles.",
+    )
+    process_control_plane_backups = subparsers.add_parser(
+        "process-control-plane-backups",
+        help="Run scheduled backup export/prune processing immediately.",
+    )
+    process_control_plane_backups.add_argument("--by", required=True)
+    process_control_plane_backups.add_argument("--reason", default=None)
+    process_control_plane_backups.add_argument("--force", action="store_true")
+    subparsers.add_parser(
         "control-plane-deployment-readiness",
         help="Show broader deployment readiness, including runtime-validation and change-control blockers.",
+    )
+    subparsers.add_parser(
+        "control-plane-trust-score",
+        help="Show current environment trust score derived from runtime, backup, proof, and readiness evidence.",
+    )
+    subparsers.add_parser(
+        "control-plane-incident-narrative",
+        help="Show a timeline-backed incident narrative summarizing current control-plane risk and actions.",
     )
     deployment_readiness_owner_team_queue = subparsers.add_parser(
         "control-plane-deployment-readiness-owner-team-queue",
@@ -590,6 +1074,9 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate_control_plane_cutover_readiness.add_argument("--rehearsal-max-age-hours", type=float, default=24.0)
     evaluate_control_plane_cutover_readiness.add_argument("--require-apply-rehearsal", action="store_true")
     evaluate_control_plane_cutover_readiness.add_argument("--skip-runtime-validation", action="store_true")
+    evaluate_control_plane_cutover_readiness.add_argument("--skip-live-workload-target-validation", action="store_true")
+    evaluate_control_plane_cutover_readiness.add_argument("--skip-live-workload-proof-validation", action="store_true")
+    evaluate_control_plane_cutover_readiness.add_argument("--skip-backup-validation", action="store_true")
     decide_control_plane_cutover = subparsers.add_parser(
         "decide-control-plane-cutover",
         help="Record an audited approval, rejection, block, or override decision for a cutover package.",
@@ -603,6 +1090,9 @@ def build_parser() -> argparse.ArgumentParser:
     decide_control_plane_cutover.add_argument("--rehearsal-max-age-hours", type=float, default=24.0)
     decide_control_plane_cutover.add_argument("--require-apply-rehearsal", action="store_true")
     decide_control_plane_cutover.add_argument("--skip-runtime-validation", action="store_true")
+    decide_control_plane_cutover.add_argument("--skip-live-workload-target-validation", action="store_true")
+    decide_control_plane_cutover.add_argument("--skip-live-workload-proof-validation", action="store_true")
+    decide_control_plane_cutover.add_argument("--skip-backup-validation", action="store_true")
     decide_control_plane_cutover.add_argument("--allow-override", action="store_true")
     list_control_plane_maintenance_events = subparsers.add_parser(
         "list-control-plane-maintenance-events",
@@ -1065,16 +1555,35 @@ def run_control_plane_runtime_rehearsal(
     *,
     changed_by: str,
     expected_backend: str,
-    expected_repository_layout: str,
     reason: str | None,
     cleanup: bool,
+    ignore_deployment_readiness: bool,
 ) -> int:
     print(
         json.dumps(
             _control_plane_runtime_rehearsal_service().run(
                 changed_by=changed_by,
                 expected_backend=expected_backend,
-                expected_repository_layout=expected_repository_layout,
+                reason=reason,
+                cleanup=cleanup,
+                ignore_deployment_readiness=ignore_deployment_readiness,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_control_plane_backup_rehearsal(
+    *,
+    changed_by: str,
+    reason: str | None,
+    cleanup: bool,
+) -> int:
+    print(
+        json.dumps(
+            _control_plane_backup_rehearsal_service().run(
+                changed_by=changed_by,
                 reason=reason,
                 cleanup=cleanup,
             ).to_dict(),
@@ -1084,8 +1593,490 @@ def run_control_plane_runtime_rehearsal(
     return 0
 
 
+def run_control_plane_operational_validation(
+    *,
+    changed_by: str,
+    expected_backend: str,
+    reason: str | None,
+    process_backups: bool,
+    cleanup: bool,
+    run_queue_validation: bool,
+    run_workload_validation: bool,
+    run_live_workload_drift_proof: bool,
+    run_worker_recovery_validation: bool,
+    queue_success_jobs: int,
+    queue_failure_jobs: int,
+    queue_delay_seconds: float,
+    run_inline_queue_worker: bool,
+    workload_rounds: int,
+    workload_maintenance_pause_jobs: int,
+    inject_maintenance_mode_pause: bool,
+) -> int:
+    print(
+        json.dumps(
+            _control_plane_operational_validation_service().run(
+                changed_by=changed_by,
+                expected_backend=expected_backend,
+                reason=reason,
+                process_backups=process_backups,
+                cleanup=cleanup,
+                run_queue_validation=run_queue_validation,
+                run_workload_validation=run_workload_validation,
+                run_live_workload_drift_proof=run_live_workload_drift_proof,
+                run_worker_recovery_validation=run_worker_recovery_validation,
+                queue_success_jobs=queue_success_jobs,
+                queue_failure_jobs=queue_failure_jobs,
+                queue_delay_seconds=queue_delay_seconds,
+                run_inline_queue_worker=run_inline_queue_worker,
+                workload_rounds=workload_rounds,
+                workload_maintenance_pause_jobs=workload_maintenance_pause_jobs,
+                inject_maintenance_mode_pause=inject_maintenance_mode_pause,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_control_plane_soak_validation(
+    *,
+    changed_by: str,
+    expected_backend: str,
+    reason: str | None,
+    target_profile_name: str | None,
+    iterations: int,
+    pause_seconds: float,
+    process_backups: bool,
+    cleanup: bool,
+    run_queue_validation: bool,
+    run_workload_validation: bool,
+    run_live_workload_drift_proof: bool,
+    run_worker_recovery_validation: bool,
+    queue_success_jobs: int,
+    queue_failure_jobs: int,
+    queue_delay_seconds: float,
+    run_inline_queue_worker: bool,
+    workload_rounds: int,
+    workload_maintenance_pause_jobs: int,
+    inject_maintenance_mode_pause: bool,
+) -> int:
+    print(
+        json.dumps(
+            _control_plane_soak_validation_service().run(
+                changed_by=changed_by,
+                expected_backend=expected_backend,
+                reason=reason,
+                target_profile_name=target_profile_name,
+                iterations=iterations,
+                pause_seconds=pause_seconds,
+                process_backups=process_backups,
+                cleanup=cleanup,
+                run_queue_validation=run_queue_validation,
+                run_workload_validation=run_workload_validation,
+                run_live_workload_drift_proof=run_live_workload_drift_proof,
+                run_worker_recovery_validation=run_worker_recovery_validation,
+                queue_success_jobs=queue_success_jobs,
+                queue_failure_jobs=queue_failure_jobs,
+                queue_delay_seconds=queue_delay_seconds,
+                run_inline_queue_worker=run_inline_queue_worker,
+                workload_rounds=workload_rounds,
+                workload_maintenance_pause_jobs=workload_maintenance_pause_jobs,
+                inject_maintenance_mode_pause=inject_maintenance_mode_pause,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_control_plane_queue_validation(
+    *,
+    changed_by: str,
+    reason: str | None,
+    queue_success_jobs: int,
+    queue_failure_jobs: int,
+    queue_delay_seconds: float,
+    run_inline_queue_worker: bool,
+) -> int:
+    print(
+        json.dumps(
+            _control_plane_queue_validation_service().run(
+                changed_by=changed_by,
+                reason=reason,
+                success_jobs=queue_success_jobs,
+                failure_jobs=queue_failure_jobs,
+                delay_seconds=queue_delay_seconds,
+                run_inline_worker=run_inline_queue_worker,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_live_workload_drift_proof(
+    *,
+    changed_by: str,
+    reason: str | None,
+    persist: bool,
+    snapshot_id: str | None,
+    audit_id: str | None,
+) -> int:
+    print(
+        json.dumps(
+            _live_workload_drift_proof_service().run(
+                changed_by=changed_by,
+                reason=reason,
+                persist=persist,
+                snapshot_id=snapshot_id,
+                audit_id=audit_id,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
 def run_control_plane_runtime_validation() -> int:
     print(json.dumps(_control_plane_runtime_validation_service().build_summary().to_dict(), indent=2))
+    return 0
+
+
+def run_control_plane_live_workload_proof_validation() -> int:
+    print(json.dumps(_control_plane_live_workload_proof_validation_service().build_summary().to_dict(), indent=2))
+    return 0
+
+
+def run_control_plane_live_workload_target_validation() -> int:
+    print(json.dumps(_control_plane_live_workload_target_validation_service().build_summary().to_dict(), indent=2))
+    return 0
+
+
+def run_list_live_workload_target_profiles() -> int:
+    print(
+        json.dumps(
+            [profile.to_dict() for profile in _live_workload_target_profile_service().list_profiles()],
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_export_live_workload_proof_bundle(*, changed_by: str, reason: str | None) -> int:
+    print(
+        json.dumps(
+            _live_workload_proof_bundle_service().export_bundle(
+                changed_by=changed_by,
+                reason=reason,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_list_live_workload_proof_bundles() -> int:
+    print(
+        json.dumps(
+            [record.to_dict() for record in _live_workload_proof_bundle_service().list_bundles()],
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_inspect_live_workload_proof_bundle(*, path: str) -> int:
+    print(
+        json.dumps(
+            _live_workload_proof_bundle_service().inspect_bundle(path=path).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_prune_live_workload_proof_bundles(
+    *,
+    changed_by: str,
+    reason: str | None,
+    retention_days: int | None,
+) -> int:
+    print(
+        json.dumps(
+            _live_workload_proof_bundle_service().prune_bundles(
+                changed_by=changed_by,
+                reason=reason,
+                retention_days=retention_days,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_delete_live_workload_proof_bundle(*, path: str, changed_by: str, reason: str | None) -> int:
+    print(
+        json.dumps(
+            _live_workload_proof_bundle_service().delete_bundle(
+                path=path,
+                changed_by=changed_by,
+                reason=reason,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_execute_control_plane_live_workload_target_validation(
+    *,
+    changed_by: str,
+    reason: str | None,
+    timeout_seconds: float,
+) -> int:
+    print(
+        json.dumps(
+            _control_plane_live_workload_target_validation_service().execute(
+                changed_by=changed_by,
+                reason=reason,
+                timeout_seconds=timeout_seconds,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_execute_live_workload_target_profile_validation(
+    *,
+    profile: str,
+    changed_by: str,
+    reason: str | None,
+    timeout_seconds: float,
+) -> int:
+    if _live_workload_target_profile_service().resolve(profile) is None:
+        raise SystemExit(f"Live workload target profile not found: {profile}")
+    print(
+        json.dumps(
+            _control_plane_live_workload_target_validation_service().execute(
+                changed_by=changed_by,
+                reason=reason,
+                timeout_seconds=timeout_seconds,
+                target_profile_name=profile,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_live_workload_target_profile_drift_proof(
+    *,
+    profile: str,
+    changed_by: str,
+    reason: str | None,
+    persist: bool,
+    snapshot_id: str | None,
+    audit_id: str | None,
+) -> int:
+    if _live_workload_target_profile_service().resolve(profile) is None:
+        raise SystemExit(f"Live workload target profile not found: {profile}")
+    print(
+        json.dumps(
+            _live_workload_drift_proof_service().run(
+                changed_by=changed_by,
+                reason=reason,
+                persist=persist,
+                snapshot_id=snapshot_id,
+                audit_id=audit_id,
+                target_profile_name=profile,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_live_workload_target_profile_operational_validation(
+    *,
+    profile: str,
+    changed_by: str,
+    expected_backend: str,
+    reason: str | None,
+    process_backups: bool,
+    cleanup: bool,
+    run_queue_validation: bool,
+    run_live_workload_drift_proof: bool,
+    queue_success_jobs: int,
+    queue_failure_jobs: int,
+    queue_delay_seconds: float,
+    run_inline_queue_worker: bool,
+    run_workload_validation: bool,
+    workload_rounds: int,
+    workload_maintenance_pause_jobs: int,
+    inject_maintenance_mode_pause: bool,
+    run_worker_recovery_validation: bool,
+) -> int:
+    if _live_workload_target_profile_service().resolve(profile) is None:
+        raise SystemExit(f"Live workload target profile not found: {profile}")
+    print(
+        json.dumps(
+            _control_plane_operational_validation_service().run(
+                changed_by=changed_by,
+                expected_backend=expected_backend,
+                reason=reason,
+                process_backups=process_backups,
+                cleanup=cleanup,
+                run_queue_validation=run_queue_validation,
+                run_live_workload_drift_proof=run_live_workload_drift_proof,
+                queue_success_jobs=queue_success_jobs,
+                queue_failure_jobs=queue_failure_jobs,
+                queue_delay_seconds=queue_delay_seconds,
+                run_inline_queue_worker=run_inline_queue_worker,
+                run_workload_validation=run_workload_validation,
+                workload_rounds=workload_rounds,
+                workload_maintenance_pause_jobs=workload_maintenance_pause_jobs,
+                inject_maintenance_mode_pause=inject_maintenance_mode_pause,
+                run_worker_recovery_validation=run_worker_recovery_validation,
+                target_profile_name=profile,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_live_workload_target_profile_canary_verify(
+    *,
+    profile: str,
+    changed_by: str,
+    expected_backend: str,
+    reason: str | None,
+    process_backups: bool,
+    cleanup: bool,
+    run_queue_validation: bool,
+    run_workload_validation: bool,
+    run_worker_recovery_validation: bool,
+    queue_success_jobs: int,
+    queue_failure_jobs: int,
+    queue_delay_seconds: float,
+    run_inline_queue_worker: bool,
+    workload_rounds: int,
+    workload_maintenance_pause_jobs: int,
+    inject_maintenance_mode_pause: bool,
+) -> int:
+    if _live_workload_target_profile_service().resolve(profile) is None:
+        raise SystemExit(f"Live workload target profile not found: {profile}")
+    print(
+        json.dumps(
+            _control_plane_canary_verifier_service().run(
+                changed_by=changed_by,
+                target_profile_name=profile,
+                expected_backend=expected_backend,
+                reason=reason,
+                process_backups=process_backups,
+                cleanup=cleanup,
+                run_queue_validation=run_queue_validation,
+                run_workload_validation=run_workload_validation,
+                run_worker_recovery_validation=run_worker_recovery_validation,
+                queue_success_jobs=queue_success_jobs,
+                queue_failure_jobs=queue_failure_jobs,
+                queue_delay_seconds=queue_delay_seconds,
+                run_inline_queue_worker=run_inline_queue_worker,
+                workload_rounds=workload_rounds,
+                workload_maintenance_pause_jobs=workload_maintenance_pause_jobs,
+                inject_maintenance_mode_pause=inject_maintenance_mode_pause,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_control_plane_backup_validation() -> int:
+    print(json.dumps(_control_plane_backup_validation_service().build_summary().to_dict(), indent=2))
+    return 0
+
+
+def run_control_plane_operational_validation_status() -> int:
+    print(json.dumps(_control_plane_operational_validation_evidence_service().build_summary().to_dict(), indent=2))
+    return 0
+
+
+def run_control_plane_soak_validation_status() -> int:
+    print(json.dumps(_control_plane_soak_validation_evidence_service().build_summary().to_dict(), indent=2))
+    return 0
+
+
+def run_control_plane_observability_export_validation() -> int:
+    print(json.dumps(_control_plane_observability_export_service().latest_export_validation().to_dict(), indent=2))
+    return 0
+
+
+def run_control_plane_trust_score() -> int:
+    print(json.dumps(_control_plane_trust_score_service().build_summary().to_dict(), indent=2))
+    return 0
+
+
+def run_control_plane_incident_narrative() -> int:
+    print(json.dumps(_control_plane_incident_narrative_service().build_summary().to_dict(), indent=2))
+    return 0
+
+
+def run_control_plane_observability_export(*, changed_by: str, reason: str | None) -> int:
+    print(
+        json.dumps(
+            control_plane_observability_export_service.export_snapshot(
+                changed_by=changed_by,
+                reason=reason,
+            ).to_dict(),
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_list_control_plane_observability_exports() -> int:
+    print(
+        json.dumps(
+            [record.to_dict() for record in _control_plane_observability_export_service().list_exports()],
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_control_plane_backup_export_validation() -> int:
+    print(json.dumps(_control_plane_backup_operations_service().latest_backup_export_validation().to_dict(), indent=2))
+    return 0
+
+
+def run_list_control_plane_backups() -> int:
+    print(
+        json.dumps(
+            [record.to_dict() for record in _control_plane_backup_operations_service().list_backup_bundles()],
+            indent=2,
+        )
+    )
+    return 0
+
+
+def run_process_control_plane_backups(
+    *,
+    changed_by: str,
+    reason: str | None,
+    force: bool,
+) -> int:
+    print(
+        json.dumps(
+            _control_plane_backup_operations_service().process_scheduled_backups(
+                changed_by=changed_by,
+                reason=reason,
+                force=force,
+            ).to_dict(),
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -1696,6 +2687,9 @@ def run_evaluate_control_plane_cutover_readiness(
     rehearsal_max_age_hours: float,
     require_apply_rehearsal: bool,
     require_runtime_validation: bool | None = None,
+    require_live_workload_target_validation: bool | None = None,
+    require_live_workload_proof_validation: bool | None = None,
+    require_backup_validation: bool | None = None,
 ) -> int:
     print(
         json.dumps(
@@ -1705,6 +2699,9 @@ def run_evaluate_control_plane_cutover_readiness(
                 rehearsal_max_age_hours=rehearsal_max_age_hours,
                 require_apply_rehearsal=require_apply_rehearsal,
                 require_runtime_validation=require_runtime_validation,
+                require_live_workload_target_validation=require_live_workload_target_validation,
+                require_live_workload_proof_validation=require_live_workload_proof_validation,
+                require_backup_validation=require_backup_validation,
             ).to_dict(),
             indent=2,
         )
@@ -1723,6 +2720,9 @@ def run_decide_control_plane_cutover(
     rehearsal_max_age_hours: float,
     require_apply_rehearsal: bool,
     require_runtime_validation: bool | None = None,
+    require_live_workload_target_validation: bool | None = None,
+    require_live_workload_proof_validation: bool | None = None,
+    require_backup_validation: bool | None = None,
     allow_override: bool,
 ) -> int:
     print(
@@ -1737,6 +2737,9 @@ def run_decide_control_plane_cutover(
                 rehearsal_max_age_hours=rehearsal_max_age_hours,
                 require_apply_rehearsal=require_apply_rehearsal,
                 require_runtime_validation=require_runtime_validation,
+                require_live_workload_target_validation=require_live_workload_target_validation,
+                require_live_workload_proof_validation=require_live_workload_proof_validation,
+                require_backup_validation=require_backup_validation,
                 allow_override=allow_override,
             ).to_dict(),
             indent=2,
@@ -2164,6 +3167,22 @@ def main() -> int:
     if args.command == "list-audits":
         print(json.dumps([record.to_dict() for record in audit_repository.list()], indent=2))
         return 0
+    if args.command == "list-remediation-reports":
+        print(
+            json.dumps(
+                [
+                    record.to_dict()
+                    for record in remediation_index_service.list_reports(
+                        limit=args.limit,
+                        function=args.function,
+                        risk=args.risk,
+                        environment_name=args.environment_name,
+                    )
+                ],
+                indent=2,
+            )
+        )
+        return 0
     if args.command == "list-jobs":
         print(json.dumps([record.to_dict() for record in job_repository.list()], indent=2))
         return 0
@@ -2200,14 +3219,195 @@ def main() -> int:
         return run_control_plane_runtime_rehearsal(
             changed_by=args.by,
             expected_backend=args.expected_backend,
-            expected_repository_layout=args.expected_layout,
+            reason=args.reason,
+            cleanup=not args.keep_artifacts,
+            ignore_deployment_readiness=args.ignore_deployment_readiness,
+        )
+    if args.command == "run-control-plane-backup-rehearsal":
+        return run_control_plane_backup_rehearsal(
+            changed_by=args.by,
             reason=args.reason,
             cleanup=not args.keep_artifacts,
         )
+    if args.command == "run-control-plane-operational-validation":
+        return run_control_plane_operational_validation(
+            changed_by=args.by,
+            expected_backend=args.expected_backend,
+            reason=args.reason,
+            process_backups=not args.skip_backup_processing,
+            cleanup=not args.keep_artifacts,
+            run_queue_validation=not args.skip_queue_validation,
+            run_workload_validation=not args.skip_workload_validation,
+            run_live_workload_drift_proof=not args.skip_live_workload_drift_proof,
+            run_worker_recovery_validation=not args.skip_worker_recovery_validation,
+            queue_success_jobs=args.queue_success_jobs,
+            queue_failure_jobs=args.queue_failure_jobs,
+            queue_delay_seconds=args.queue_delay_seconds,
+            run_inline_queue_worker=not args.no_inline_queue_worker,
+            workload_rounds=args.workload_rounds,
+            workload_maintenance_pause_jobs=args.workload_maintenance_pause_jobs,
+            inject_maintenance_mode_pause=not args.skip_maintenance_pause_injection,
+        )
+    if args.command == "run-control-plane-soak-validation":
+        return run_control_plane_soak_validation(
+            changed_by=args.by,
+            expected_backend=args.expected_backend,
+            reason=args.reason,
+            target_profile_name=args.target_profile,
+            iterations=args.iterations,
+            pause_seconds=args.pause_seconds,
+            process_backups=not args.skip_backup_processing,
+            cleanup=not args.keep_artifacts,
+            run_queue_validation=not args.skip_queue_validation,
+            run_workload_validation=not args.skip_workload_validation,
+            run_live_workload_drift_proof=not args.skip_live_workload_drift_proof,
+            run_worker_recovery_validation=not args.skip_worker_recovery_validation,
+            queue_success_jobs=args.queue_success_jobs,
+            queue_failure_jobs=args.queue_failure_jobs,
+            queue_delay_seconds=args.queue_delay_seconds,
+            run_inline_queue_worker=not args.no_inline_queue_worker,
+            workload_rounds=args.workload_rounds,
+            workload_maintenance_pause_jobs=args.workload_maintenance_pause_jobs,
+            inject_maintenance_mode_pause=not args.skip_maintenance_pause_injection,
+        )
+    if args.command == "run-control-plane-queue-validation":
+        return run_control_plane_queue_validation(
+            changed_by=args.by,
+            reason=args.reason,
+            queue_success_jobs=args.queue_success_jobs,
+            queue_failure_jobs=args.queue_failure_jobs,
+            queue_delay_seconds=args.queue_delay_seconds,
+            run_inline_queue_worker=not args.no_inline_queue_worker,
+        )
+    if args.command == "run-live-workload-drift-proof":
+        return run_live_workload_drift_proof(
+            changed_by=args.by,
+            reason=args.reason,
+            persist=not args.no_persist,
+            snapshot_id=args.snapshot_id,
+            audit_id=args.audit_id,
+        )
+    if args.command == "control-plane-live-workload-target-validation":
+        return run_control_plane_live_workload_target_validation()
+    if args.command == "run-control-plane-live-workload-target-validation":
+        return run_execute_control_plane_live_workload_target_validation(
+            changed_by=args.by,
+            reason=args.reason,
+            timeout_seconds=args.timeout_seconds,
+        )
+    if args.command == "run-live-workload-target-profile-validation":
+        return run_execute_live_workload_target_profile_validation(
+            profile=args.profile,
+            changed_by=args.by,
+            reason=args.reason,
+            timeout_seconds=args.timeout_seconds,
+        )
+    if args.command == "run-live-workload-target-profile-drift-proof":
+        return run_live_workload_target_profile_drift_proof(
+            profile=args.profile,
+            changed_by=args.by,
+            reason=args.reason,
+            persist=not args.no_persist,
+            snapshot_id=args.snapshot_id,
+            audit_id=args.audit_id,
+        )
+    if args.command == "run-live-workload-target-profile-operational-validation":
+        return run_live_workload_target_profile_operational_validation(
+            profile=args.profile,
+            changed_by=args.by,
+            expected_backend=args.expected_backend,
+            reason=args.reason,
+            process_backups=not args.skip_backup_processing,
+            cleanup=not args.no_cleanup,
+            run_queue_validation=not args.skip_queue_validation,
+            run_live_workload_drift_proof=not args.skip_live_workload_drift_proof,
+            queue_success_jobs=args.queue_success_jobs,
+            queue_failure_jobs=args.queue_failure_jobs,
+            queue_delay_seconds=args.queue_delay_seconds,
+            run_inline_queue_worker=not args.no_inline_queue_worker,
+            run_workload_validation=not args.skip_workload_validation,
+            workload_rounds=args.workload_rounds,
+            workload_maintenance_pause_jobs=args.workload_maintenance_pause_jobs,
+            inject_maintenance_mode_pause=not args.skip_maintenance_pause_injection,
+            run_worker_recovery_validation=not args.skip_worker_recovery_validation,
+        )
+    if args.command == "run-live-workload-target-profile-canary-verify":
+        return run_live_workload_target_profile_canary_verify(
+            profile=args.profile,
+            changed_by=args.by,
+            expected_backend=args.expected_backend,
+            reason=args.reason,
+            process_backups=not args.skip_backup_processing,
+            cleanup=not args.no_cleanup,
+            run_queue_validation=not args.skip_queue_validation,
+            run_workload_validation=not args.skip_workload_validation,
+            run_worker_recovery_validation=not args.skip_worker_recovery_validation,
+            queue_success_jobs=args.queue_success_jobs,
+            queue_failure_jobs=args.queue_failure_jobs,
+            queue_delay_seconds=args.queue_delay_seconds,
+            run_inline_queue_worker=not args.no_inline_queue_worker,
+            workload_rounds=args.workload_rounds,
+            workload_maintenance_pause_jobs=args.workload_maintenance_pause_jobs,
+            inject_maintenance_mode_pause=not args.skip_maintenance_pause_injection,
+        )
+    if args.command == "list-live-workload-target-profiles":
+        return run_list_live_workload_target_profiles()
+    if args.command == "export-live-workload-proof-bundle":
+        return run_export_live_workload_proof_bundle(
+            changed_by=args.by,
+            reason=args.reason,
+        )
+    if args.command == "list-live-workload-proof-bundles":
+        return run_list_live_workload_proof_bundles()
+    if args.command == "inspect-live-workload-proof-bundle":
+        return run_inspect_live_workload_proof_bundle(path=args.path)
+    if args.command == "prune-live-workload-proof-bundles":
+        return run_prune_live_workload_proof_bundles(
+            changed_by=args.by,
+            reason=args.reason,
+            retention_days=args.retention_days,
+        )
+    if args.command == "delete-live-workload-proof-bundle":
+        return run_delete_live_workload_proof_bundle(
+            path=args.path,
+            changed_by=args.by,
+            reason=args.reason,
+        )
     if args.command == "control-plane-runtime-validation":
         return run_control_plane_runtime_validation()
+    if args.command == "control-plane-live-workload-proof-validation":
+        return run_control_plane_live_workload_proof_validation()
+    if args.command == "control-plane-backup-validation":
+        return run_control_plane_backup_validation()
+    if args.command == "control-plane-operational-validation-status":
+        return run_control_plane_operational_validation_status()
+    if args.command == "control-plane-soak-validation-status":
+        return run_control_plane_soak_validation_status()
+    if args.command == "control-plane-observability-export-validation":
+        return run_control_plane_observability_export_validation()
+    if args.command == "export-control-plane-observability":
+        return run_control_plane_observability_export(
+            changed_by=args.by,
+            reason=args.reason,
+        )
+    if args.command == "list-control-plane-observability-exports":
+        return run_list_control_plane_observability_exports()
+    if args.command == "control-plane-backup-export-validation":
+        return run_control_plane_backup_export_validation()
+    if args.command == "list-control-plane-backups":
+        return run_list_control_plane_backups()
+    if args.command == "process-control-plane-backups":
+        return run_process_control_plane_backups(
+            changed_by=args.by,
+            reason=args.reason,
+            force=args.force,
+        )
     if args.command == "control-plane-deployment-readiness":
         return run_control_plane_deployment_readiness()
+    if args.command == "control-plane-trust-score":
+        return run_control_plane_trust_score()
+    if args.command == "control-plane-incident-narrative":
+        return run_control_plane_incident_narrative()
     if args.command == "control-plane-deployment-readiness-owner-team-queue":
         return run_control_plane_deployment_readiness_owner_team_queue(
             status=args.status,
@@ -2392,6 +3592,13 @@ def main() -> int:
             rehearsal_max_age_hours=args.rehearsal_max_age_hours,
             require_apply_rehearsal=args.require_apply_rehearsal,
             require_runtime_validation=None if not args.skip_runtime_validation else False,
+            require_live_workload_target_validation=(
+                None if not args.skip_live_workload_target_validation else False
+            ),
+            require_live_workload_proof_validation=(
+                None if not args.skip_live_workload_proof_validation else False
+            ),
+            require_backup_validation=None if not args.skip_backup_validation else False,
         )
     if args.command == "decide-control-plane-cutover":
         return run_decide_control_plane_cutover(
@@ -2404,6 +3611,13 @@ def main() -> int:
             rehearsal_max_age_hours=args.rehearsal_max_age_hours,
             require_apply_rehearsal=args.require_apply_rehearsal,
             require_runtime_validation=None if not args.skip_runtime_validation else False,
+            require_live_workload_target_validation=(
+                None if not args.skip_live_workload_target_validation else False
+            ),
+            require_live_workload_proof_validation=(
+                None if not args.skip_live_workload_proof_validation else False
+            ),
+            require_backup_validation=None if not args.skip_backup_validation else False,
             allow_override=args.allow_override,
         )
     if args.command == "list-control-plane-maintenance-events":

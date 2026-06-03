@@ -76,7 +76,13 @@ class ControlPlaneMetricsService:
         lines.extend(self._oncall_lines(analytics))
         lines.extend(self._evaluation_lines(analytics))
         lines.extend(self._runtime_validation_lines(analytics))
+        lines.extend(self._live_workload_target_validation_lines(analytics))
+        lines.extend(self._live_workload_proof_validation_lines(analytics))
+        lines.extend(self._backup_validation_lines(analytics))
+        lines.extend(self._backup_export_validation_lines(analytics))
+        lines.extend(self._observability_export_validation_lines(analytics))
         lines.extend(self._deployment_readiness_lines(analytics))
+        lines.extend(self._privileged_api_audit_lines(analytics))
         lines.extend(self._alert_lines())
         lines.extend(self._maintenance_event_lines())
 
@@ -270,6 +276,184 @@ class ControlPlaneMetricsService:
             lines.append(self._line("deployment_readiness_blocker_active", 1, {"code": blocker}))
         for warning in summary.warnings:
             lines.append(self._line("deployment_readiness_warning_active", 1, {"code": warning}))
+        return lines
+
+    def _live_workload_proof_validation_lines(self, analytics: ControlPlaneAnalyticsReport) -> list[str]:
+        summary = analytics.live_workload_proof_validation
+        status_values = {
+            "passed": 1 if summary.status == "passed" else 0,
+            "warning": 1 if summary.status == "warning" else 0,
+            "critical": 1 if summary.status == "critical" else 0,
+            "missing": 1 if summary.status == "missing" else 0,
+            "failed": 1 if summary.status == "failed" else 0,
+        }
+        cadence_values = {
+            "fresh": 1 if summary.cadence_status == "fresh" else 0,
+            "due_soon": 1 if summary.cadence_status == "due_soon" else 0,
+            "aging": 1 if summary.cadence_status == "aging" else 0,
+            "overdue": 1 if summary.cadence_status == "overdue" else 0,
+            "missing": 1 if summary.cadence_status == "missing" else 0,
+            "failed": 1 if summary.cadence_status == "failed" else 0,
+        }
+        lines = [
+            self._line("live_workload_proof_status", value, {"status": status})
+            for status, value in status_values.items()
+        ]
+        lines.extend(
+            self._line("live_workload_proof_cadence_status", value, {"status": status})
+            for status, value in cadence_values.items()
+        )
+        if summary.age_hours is not None:
+            lines.append(self._line("live_workload_proof_age_hours", summary.age_hours))
+        if summary.due_in_hours is not None:
+            lines.append(self._line("live_workload_proof_due_in_hours", summary.due_in_hours))
+        if summary.latest_proof_recorded_at is not None:
+            lines.append(self._line("live_workload_proof_present", 1))
+        else:
+            lines.append(self._line("live_workload_proof_present", 0))
+        if summary.latest_alert_count is not None:
+            lines.append(self._line("live_workload_proof_alert_count", summary.latest_alert_count))
+        if summary.latest_event_count is not None:
+            lines.append(self._line("live_workload_proof_event_count", summary.latest_event_count))
+        return lines
+
+    def _live_workload_target_validation_lines(self, analytics: ControlPlaneAnalyticsReport) -> list[str]:
+        summary = analytics.live_workload_target_validation
+        status_values = {
+            "passed": 1 if summary.status == "passed" else 0,
+            "warning": 1 if summary.status == "warning" else 0,
+            "critical": 1 if summary.status == "critical" else 0,
+            "missing": 1 if summary.status == "missing" else 0,
+            "failed": 1 if summary.status == "failed" else 0,
+        }
+        cadence_values = {
+            "fresh": 1 if summary.cadence_status == "fresh" else 0,
+            "aging": 1 if summary.cadence_status == "aging" else 0,
+            "overdue": 1 if summary.cadence_status == "overdue" else 0,
+            "missing": 1 if summary.cadence_status == "missing" else 0,
+            "failed": 1 if summary.cadence_status == "failed" else 0,
+        }
+        lines = [
+            self._line("live_workload_target_validation_status", value, {"status": status})
+            for status, value in status_values.items()
+        ]
+        lines.extend(
+            self._line("live_workload_target_validation_cadence_status", value, {"status": status})
+            for status, value in cadence_values.items()
+        )
+        if summary.age_hours is not None:
+            lines.append(self._line("live_workload_target_validation_age_hours", summary.age_hours))
+        if summary.latest_validation_recorded_at is not None:
+            lines.append(self._line("live_workload_target_validation_present", 1))
+        else:
+            lines.append(self._line("live_workload_target_validation_present", 0))
+        return lines
+
+    def _backup_validation_lines(self, analytics: ControlPlaneAnalyticsReport) -> list[str]:
+        summary = analytics.backup_validation
+        status_values = {
+            "passed": 1 if summary.status == "passed" else 0,
+            "warning": 1 if summary.status == "warning" else 0,
+            "critical": 1 if summary.status == "critical" else 0,
+            "missing": 1 if summary.status == "missing" else 0,
+            "failed": 1 if summary.status == "failed" else 0,
+        }
+        cadence_values = {
+            "fresh": 1 if summary.cadence_status == "fresh" else 0,
+            "due_soon": 1 if summary.cadence_status == "due_soon" else 0,
+            "aging": 1 if summary.cadence_status == "aging" else 0,
+            "overdue": 1 if summary.cadence_status == "overdue" else 0,
+            "missing": 1 if summary.cadence_status == "missing" else 0,
+            "failed": 1 if summary.cadence_status == "failed" else 0,
+        }
+        lines = [
+            self._line("backup_rehearsal_status", value, {"status": status})
+            for status, value in status_values.items()
+        ]
+        lines.extend(
+            self._line("backup_rehearsal_cadence_status", value, {"status": status})
+            for status, value in cadence_values.items()
+        )
+        if summary.age_hours is not None:
+            lines.append(self._line("backup_rehearsal_age_hours", summary.age_hours))
+        if summary.due_in_hours is not None:
+            lines.append(self._line("backup_rehearsal_due_in_hours", summary.due_in_hours))
+        if summary.latest_rehearsal_recorded_at is not None:
+            lines.append(self._line("backup_rehearsal_present", 1))
+        else:
+            lines.append(self._line("backup_rehearsal_present", 0))
+        return lines
+
+    def _backup_export_validation_lines(self, analytics: ControlPlaneAnalyticsReport) -> list[str]:
+        summary = analytics.backup_export_validation
+        status_values = {
+            "passed": 1 if summary.status == "passed" else 0,
+            "warning": 1 if summary.status == "warning" else 0,
+            "critical": 1 if summary.status == "critical" else 0,
+            "missing": 1 if summary.status == "missing" else 0,
+        }
+        lines = [
+            self._line("backup_export_status", value, {"status": status})
+            for status, value in status_values.items()
+        ]
+        if summary.age_hours is not None:
+            lines.append(self._line("backup_export_age_hours", summary.age_hours))
+        if summary.latest_exported_at is not None:
+            lines.append(self._line("backup_export_present", 1))
+        else:
+            lines.append(self._line("backup_export_present", 0))
+        return lines
+
+    def _observability_export_validation_lines(self, analytics: ControlPlaneAnalyticsReport) -> list[str]:
+        summary = analytics.observability_export_validation
+        status_values = {
+            "passed": 1 if summary.status == "passed" else 0,
+            "warning": 1 if summary.status == "warning" else 0,
+            "critical": 1 if summary.status == "critical" else 0,
+            "missing": 1 if summary.status == "missing" else 0,
+        }
+        lines = [
+            self._line("observability_export_status", value, {"status": status})
+            for status, value in status_values.items()
+        ]
+        if summary.age_hours is not None:
+            lines.append(self._line("observability_export_age_hours", summary.age_hours))
+        if summary.latest_exported_at is not None:
+            lines.append(self._line("observability_export_present", 1))
+        else:
+            lines.append(self._line("observability_export_present", 0))
+        return lines
+
+    def _privileged_api_audit_lines(self, analytics: ControlPlaneAnalyticsReport) -> list[str]:
+        summary = analytics.privileged_api_audit
+        lines = [
+            self._line("privileged_api_audit_entries", summary.total_entries, {"scope": "total"}),
+            self._line("privileged_api_audit_entries", summary.recent_entries, {"scope": "recent"}),
+            self._line("privileged_api_audit_non_ok_entries", summary.non_ok_recent_entries),
+            self._line("privileged_api_audit_non_ok_entries", summary.denied_recent_entries, {"outcome": "denied"}),
+            self._line("privileged_api_audit_non_ok_entries", summary.blocked_recent_entries, {"outcome": "blocked"}),
+            self._line(
+                "privileged_api_audit_non_ok_entries",
+                summary.rejected_recent_entries,
+                {"outcome": "rejected"},
+            ),
+        ]
+        for item in summary.top_actions:
+            lines.append(
+                self._line(
+                    "privileged_api_audit_actions",
+                    int(item.get("count", 0)),
+                    {"action": str(item.get("action", "unknown"))},
+                )
+            )
+        for item in summary.top_roles:
+            lines.append(
+                self._line(
+                    "privileged_api_audit_roles",
+                    int(item.get("count", 0)),
+                    {"role": str(item.get("role", "unknown"))},
+                )
+            )
         return lines
 
     def _alert_lines(self) -> list[str]:
