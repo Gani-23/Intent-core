@@ -21,6 +21,7 @@ frontend/dist/
 targets/*/node_modules/
 
 data/control_plane.db*
+data/control_plane.testing.db*
 data/*.jsonl
 data/*.log
 data/*.pid
