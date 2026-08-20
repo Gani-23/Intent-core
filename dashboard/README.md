@@ -16,7 +16,7 @@ Backend:
 
 ```bash
 cd /Users/gani/Desktop/Intent-drive/living-systems-auditor
-./.venv/bin/python -m uvicorn lsa.api.main:app --host 127.0.0.1 --port 8000
+./.venv/bin/python -m uvicorn lsa.api.main:app --host 127.0.0.1 --port 3614
 ```
 
 Frontend:
@@ -24,13 +24,13 @@ Frontend:
 ```bash
 cd /Users/gani/Desktop/Intent-drive/living-systems-auditor/dashboard
 npm install
-npm run dev -- --host 127.0.0.1
+npm run dev -- --host 127.0.0.1 --port 1234
 ```
 
 Open:
 
-- [http://127.0.0.1:5173/](http://127.0.0.1:5173/)
-- [http://127.0.0.1:5173/command](http://127.0.0.1:5173/command)
+- [http://127.0.0.1:1234/](http://127.0.0.1:1234/)
+- [http://127.0.0.1:1234/command](http://127.0.0.1:1234/command)
 
 ## Environment
 
@@ -44,7 +44,7 @@ cp .env.example .env
 
 For backend CORS in a deployed split setup:
 
-- `LSA_API_ALLOWED_ORIGINS=http://localhost:5173,https://your-frontend-host`
+- `LSA_API_ALLOWED_ORIGINS=http://localhost:1234,https://your-frontend-host`
 
 ## Current scope
 

@@ -324,6 +324,7 @@ class LiveWorkloadProofBundleService:
         reason: str | None = None,
         actor_details: dict | None = None,
         retention_days: int | None = None,
+        record_event: bool = True,
     ) -> LiveWorkloadProofBundlePruneResult:
         directory = self.settings.live_workload_proof_exports_dir
         directory.mkdir(parents=True, exist_ok=True)
@@ -347,13 +348,14 @@ class LiveWorkloadProofBundleService:
             pruned_count=len(deleted_paths),
             deleted_paths=deleted_paths,
         )
-        self.job_service.record_maintenance_event(
-            event_type="live_workload_proof_bundles_pruned",
-            changed_by=changed_by,
-            reason=reason,
-            details=result.to_dict(),
-            actor_details=actor_details,
-        )
+        if record_event:
+            self.job_service.record_maintenance_event(
+                event_type="live_workload_proof_bundles_pruned",
+                changed_by=changed_by,
+                reason=reason,
+                details=result.to_dict(),
+                actor_details=actor_details,
+            )
         return result
 
     def _sha256_file(self, path: Path) -> str:

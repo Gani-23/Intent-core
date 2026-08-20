@@ -28,18 +28,18 @@ export default defineConfig({
   },
   server: {
     host: "0.0.0.0",
-    port: 5173,
+    port: 1234,
     proxy: {
-      "/health": "http://127.0.0.1:8000",
-      "/metrics": "http://127.0.0.1:8000",
-      "/snapshots": "http://127.0.0.1:8000",
-      "/audits": "http://127.0.0.1:8000",
-      "/jobs": "http://127.0.0.1:8000",
-      "/workers": "http://127.0.0.1:8000",
-      "/maintenance": "http://127.0.0.1:8000",
-      "/analytics": "http://127.0.0.1:8000",
-      "/control-plane-alerts": "http://127.0.0.1:8000",
-      "/remediation-reports": "http://127.0.0.1:8000"
+      "/health": "http://127.0.0.1:3614",
+      "/metrics": "http://127.0.0.1:3614",
+      "/snapshots": "http://127.0.0.1:3614",
+      "/audits": "http://127.0.0.1:3614",
+      "/jobs": "http://127.0.0.1:3614",
+      "/workers": "http://127.0.0.1:3614",
+      "/maintenance": "http://127.0.0.1:3614",
+      "/analytics": "http://127.0.0.1:3614",
+      "/control-plane-alerts": "http://127.0.0.1:3614",
+      "/remediation-reports": "http://127.0.0.1:3614"
     }
   }
 });

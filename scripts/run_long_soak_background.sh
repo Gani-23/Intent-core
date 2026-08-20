@@ -12,6 +12,48 @@ EXPECTED_BACKEND="${EXPECTED_BACKEND:-sqlite}"
 TARGET_PROFILE="${TARGET_PROFILE:-public-echo-pair}"
 BY="${BY:-gani}"
 REASON="${REASON:-long backend soak}"
+TESTING=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --testing)
+      TESTING=1
+      shift
+      ;;
+    --iterations)
+      ITERATIONS="${2:?missing value for --iterations}"
+      shift 2
+      ;;
+    --pause-seconds)
+      PAUSE_SECONDS="${2:?missing value for --pause-seconds}"
+      shift 2
+      ;;
+    --expected-backend)
+      EXPECTED_BACKEND="${2:?missing value for --expected-backend}"
+      shift 2
+      ;;
+    --target-profile)
+      TARGET_PROFILE="${2:?missing value for --target-profile}"
+      shift 2
+      ;;
+    --by)
+      BY="${2:?missing value for --by}"
+      shift 2
+      ;;
+    --reason)
+      REASON="${2:?missing value for --reason}"
+      shift 2
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ "$TESTING" -eq 1 && "${REASON:-}" == "long backend soak" ]]; then
+  REASON="testing"
+fi
 
 mkdir -p "$LOG_DIR"
 
@@ -52,6 +94,10 @@ command = [
     "--pause-seconds",
     "$PAUSE_SECONDS",
 ]
+
+if [[ "$TESTING" -eq 1 ]]; then
+    command+=("--testing")
+fi
 
 with log_file.open("ab") as handle:
     process = subprocess.Popen(

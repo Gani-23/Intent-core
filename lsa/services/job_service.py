@@ -977,7 +977,7 @@ class JobService:
             }
         return self.prune_history()
 
-    def prune_history(self, *, force: bool = False) -> dict[str, int]:
+    def prune_history(self, *, force: bool = False, record_event: bool = True) -> dict[str, int]:
         now = monotonic()
         if not force and now - self._last_prune_at < self.history_prune_interval_seconds:
             return {
@@ -1001,12 +1001,13 @@ class JobService:
             "worker_heartbeats_pruned": worker_heartbeats_compacted,
             "job_lease_events_pruned": job_lease_events_compacted,
         }
-        self._record_maintenance_event(
-            event_type="history_pruned",
-            changed_by="system",
-            reason=None,
-            details=result,
-        )
+        if record_event:
+            self._record_maintenance_event(
+                event_type="history_pruned",
+                changed_by="system",
+                reason=None,
+                details=result,
+            )
         return result
 
     def submit_audit_trace(self, request_payload: dict) -> JobRecord:

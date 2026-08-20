@@ -501,6 +501,35 @@ job_service.operational_validation_service = _control_plane_operational_validati
 job_service.operational_validation_evidence_service = _control_plane_operational_validation_evidence_service()
 
 
+def _testing_reason(reason: str | None, testing: bool) -> str | None:
+    if reason:
+        return reason
+    if testing:
+        return "testing"
+    return None
+
+
+def _add_testing_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--testing",
+        action="store_true",
+        help="Mark this run as disposable testing and prune generated artifacts afterward.",
+    )
+
+
+def _run_testing_cleanup() -> None:
+    job_service.prune_history(force=True, record_event=False)
+    _control_plane_observability_export_service().prune_exports()
+    _control_plane_backup_operations_service().prune_backup_bundles()
+    _live_workload_proof_bundle_service().prune_bundles(
+        changed_by="system",
+        reason="testing cleanup",
+        retention_days=0,
+        record_event=False,
+    )
+    PrivilegedApiAuditService(settings.privileged_api_audit_log_path).prune(retention_days=0)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lsa", description="Living Systems Auditor CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -611,6 +640,7 @@ def build_parser() -> argparse.ArgumentParser:
     control_plane_runtime_smoke.add_argument("--by", required=True)
     control_plane_runtime_smoke.add_argument("--reason", default=None)
     control_plane_runtime_smoke.add_argument("--keep-artifacts", action="store_true")
+    _add_testing_argument(control_plane_runtime_smoke)
     control_plane_runtime_rehearsal = subparsers.add_parser(
         "run-control-plane-runtime-rehearsal",
         help="Verify that the live control-plane runtime matches the expected backend and passes a smoke check.",
@@ -620,6 +650,7 @@ def build_parser() -> argparse.ArgumentParser:
     control_plane_runtime_rehearsal.add_argument("--reason", default=None)
     control_plane_runtime_rehearsal.add_argument("--keep-artifacts", action="store_true")
     control_plane_runtime_rehearsal.add_argument("--ignore-deployment-readiness", action="store_true")
+    _add_testing_argument(control_plane_runtime_rehearsal)
     control_plane_backup_rehearsal = subparsers.add_parser(
         "run-control-plane-backup-rehearsal",
         help="Export, restore, and verify a control-plane backup in an isolated rehearsal workspace.",
@@ -627,6 +658,7 @@ def build_parser() -> argparse.ArgumentParser:
     control_plane_backup_rehearsal.add_argument("--by", required=True)
     control_plane_backup_rehearsal.add_argument("--reason", default=None)
     control_plane_backup_rehearsal.add_argument("--keep-artifacts", action="store_true")
+    _add_testing_argument(control_plane_backup_rehearsal)
     control_plane_operational_validation = subparsers.add_parser(
         "run-control-plane-operational-validation",
         help="Run runtime proof, backup proof, backup freshness, and readiness as one operational validation flow.",
@@ -647,6 +679,7 @@ def build_parser() -> argparse.ArgumentParser:
     control_plane_operational_validation.add_argument("--workload-rounds", type=int, default=3)
     control_plane_operational_validation.add_argument("--workload-maintenance-pause-jobs", type=int, default=3)
     control_plane_operational_validation.add_argument("--skip-maintenance-pause-injection", action="store_true")
+    _add_testing_argument(control_plane_operational_validation)
     control_plane_soak_validation = subparsers.add_parser(
         "run-control-plane-soak-validation",
         help="Run repeated operational validation iterations and persist soak evidence.",
@@ -670,6 +703,7 @@ def build_parser() -> argparse.ArgumentParser:
     control_plane_soak_validation.add_argument("--workload-rounds", type=int, default=3)
     control_plane_soak_validation.add_argument("--workload-maintenance-pause-jobs", type=int, default=3)
     control_plane_soak_validation.add_argument("--skip-maintenance-pause-injection", action="store_true")
+    _add_testing_argument(control_plane_soak_validation)
     control_plane_queue_validation = subparsers.add_parser(
         "run-control-plane-queue-validation",
         help="Run a synthetic queue/worker drill using noop validation jobs.",
@@ -680,6 +714,7 @@ def build_parser() -> argparse.ArgumentParser:
     control_plane_queue_validation.add_argument("--queue-failure-jobs", type=int, default=1)
     control_plane_queue_validation.add_argument("--queue-delay-seconds", type=float, default=0.0)
     control_plane_queue_validation.add_argument("--no-inline-queue-worker", action="store_true")
+    _add_testing_argument(control_plane_queue_validation)
     live_workload_drift_proof = subparsers.add_parser(
         "run-live-workload-drift-proof",
         help="Run the sample workload live, emit collector-style traces, and prove drift detection end to end.",
@@ -689,6 +724,7 @@ def build_parser() -> argparse.ArgumentParser:
     live_workload_drift_proof.add_argument("--no-persist", action="store_true")
     live_workload_drift_proof.add_argument("--snapshot-id", default=None)
     live_workload_drift_proof.add_argument("--audit-id", default=None)
+    _add_testing_argument(live_workload_drift_proof)
     subparsers.add_parser(
         "control-plane-live-workload-target-validation",
         help="Probe the currently configured live workload proof targets and report whether they are reachable.",
@@ -700,6 +736,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_live_workload_target_validation.add_argument("--by", required=True)
     run_live_workload_target_validation.add_argument("--reason", default=None)
     run_live_workload_target_validation.add_argument("--timeout-seconds", type=float, default=10.0)
+    _add_testing_argument(run_live_workload_target_validation)
     run_live_workload_target_profile_validation = subparsers.add_parser(
         "run-live-workload-target-profile-validation",
         help="Probe a named live workload target profile and persist the result.",
@@ -708,6 +745,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_live_workload_target_profile_validation.add_argument("--by", required=True)
     run_live_workload_target_profile_validation.add_argument("--reason", default=None)
     run_live_workload_target_profile_validation.add_argument("--timeout-seconds", type=float, default=10.0)
+    _add_testing_argument(run_live_workload_target_profile_validation)
     run_live_workload_target_profile_drift_proof = subparsers.add_parser(
         "run-live-workload-target-profile-drift-proof",
         help="Run live workload drift proof against a named target profile.",
@@ -718,6 +756,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_live_workload_target_profile_drift_proof.add_argument("--no-persist", action="store_true")
     run_live_workload_target_profile_drift_proof.add_argument("--snapshot-id", default=None)
     run_live_workload_target_profile_drift_proof.add_argument("--audit-id", default=None)
+    _add_testing_argument(run_live_workload_target_profile_drift_proof)
     run_live_workload_target_profile_operational_validation = subparsers.add_parser(
         "run-live-workload-target-profile-operational-validation",
         help="Run one-shot operational validation against a named live workload target profile.",
@@ -737,6 +776,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_live_workload_target_profile_operational_validation.add_argument("--queue-delay-seconds", type=float, default=0.0)
     run_live_workload_target_profile_operational_validation.add_argument("--no-inline-queue-worker", action="store_true")
     run_live_workload_target_profile_operational_validation.add_argument("--workload-rounds", type=int, default=3)
+    _add_testing_argument(run_live_workload_target_profile_operational_validation)
     run_live_workload_target_profile_canary_verify = subparsers.add_parser(
         "run-live-workload-target-profile-canary-verify",
         help="Run target validation, drift proof, and operational validation as one canary promotion verdict.",
@@ -757,6 +797,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_live_workload_target_profile_canary_verify.add_argument("--workload-rounds", type=int, default=3)
     run_live_workload_target_profile_canary_verify.add_argument("--workload-maintenance-pause-jobs", type=int, default=3)
     run_live_workload_target_profile_canary_verify.add_argument("--skip-maintenance-pause-injection", action="store_true")
+    _add_testing_argument(run_live_workload_target_profile_canary_verify)
     run_live_workload_target_profile_operational_validation.add_argument("--workload-maintenance-pause-jobs", type=int, default=3)
     run_live_workload_target_profile_operational_validation.add_argument("--skip-maintenance-pause-injection", action="store_true")
     subparsers.add_parser(
@@ -769,6 +810,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export_live_workload_proof_bundle.add_argument("--by", required=True)
     export_live_workload_proof_bundle.add_argument("--reason", default=None)
+    _add_testing_argument(export_live_workload_proof_bundle)
     subparsers.add_parser(
         "list-live-workload-proof-bundles",
         help="List exported live workload proof bundles.",
@@ -785,6 +827,7 @@ def build_parser() -> argparse.ArgumentParser:
     prune_live_workload_proof_bundles.add_argument("--by", required=True)
     prune_live_workload_proof_bundles.add_argument("--reason", default=None)
     prune_live_workload_proof_bundles.add_argument("--retention-days", type=int, default=None)
+    _add_testing_argument(prune_live_workload_proof_bundles)
     delete_live_workload_proof_bundle = subparsers.add_parser(
         "delete-live-workload-proof-bundle",
         help="Delete a specific exported live workload proof bundle.",
@@ -822,6 +865,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     observability_export.add_argument("--by", required=True)
     observability_export.add_argument("--reason", default=None)
+    _add_testing_argument(observability_export)
     subparsers.add_parser(
         "list-control-plane-observability-exports",
         help="List exported control-plane observability snapshots.",
@@ -841,6 +885,7 @@ def build_parser() -> argparse.ArgumentParser:
     process_control_plane_backups.add_argument("--by", required=True)
     process_control_plane_backups.add_argument("--reason", default=None)
     process_control_plane_backups.add_argument("--force", action="store_true")
+    _add_testing_argument(process_control_plane_backups)
     subparsers.add_parser(
         "control-plane-deployment-readiness",
         help="Show broader deployment readiness, including runtime-validation and change-control blockers.",
@@ -3098,6 +3143,7 @@ def _parse_timestamp_argument(raw_value: str | None) -> datetime | None:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    testing = getattr(args, "testing", False)
 
     if args.command == "ingest":
         return run_ingest(
@@ -3210,32 +3256,41 @@ def main() -> int:
     if args.command == "control-plane-preflight":
         return run_control_plane_preflight()
     if args.command == "run-control-plane-runtime-smoke":
-        return run_control_plane_runtime_smoke(
+        result = run_control_plane_runtime_smoke(
             changed_by=args.by,
-            reason=args.reason,
-            cleanup=not args.keep_artifacts,
+            reason=_testing_reason(args.reason, testing),
+            cleanup=testing or not args.keep_artifacts,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "run-control-plane-runtime-rehearsal":
-        return run_control_plane_runtime_rehearsal(
+        result = run_control_plane_runtime_rehearsal(
             changed_by=args.by,
             expected_backend=args.expected_backend,
-            reason=args.reason,
-            cleanup=not args.keep_artifacts,
+            reason=_testing_reason(args.reason, testing),
+            cleanup=testing or not args.keep_artifacts,
             ignore_deployment_readiness=args.ignore_deployment_readiness,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "run-control-plane-backup-rehearsal":
-        return run_control_plane_backup_rehearsal(
+        result = run_control_plane_backup_rehearsal(
             changed_by=args.by,
-            reason=args.reason,
-            cleanup=not args.keep_artifacts,
+            reason=_testing_reason(args.reason, testing),
+            cleanup=testing or not args.keep_artifacts,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "run-control-plane-operational-validation":
-        return run_control_plane_operational_validation(
+        result = run_control_plane_operational_validation(
             changed_by=args.by,
             expected_backend=args.expected_backend,
-            reason=args.reason,
+            reason=_testing_reason(args.reason, testing),
             process_backups=not args.skip_backup_processing,
-            cleanup=not args.keep_artifacts,
+            cleanup=testing or not args.keep_artifacts,
             run_queue_validation=not args.skip_queue_validation,
             run_workload_validation=not args.skip_workload_validation,
             run_live_workload_drift_proof=not args.skip_live_workload_drift_proof,
@@ -3248,16 +3303,19 @@ def main() -> int:
             workload_maintenance_pause_jobs=args.workload_maintenance_pause_jobs,
             inject_maintenance_mode_pause=not args.skip_maintenance_pause_injection,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "run-control-plane-soak-validation":
-        return run_control_plane_soak_validation(
+        result = run_control_plane_soak_validation(
             changed_by=args.by,
             expected_backend=args.expected_backend,
-            reason=args.reason,
+            reason=_testing_reason(args.reason, testing),
             target_profile_name=args.target_profile,
             iterations=args.iterations,
             pause_seconds=args.pause_seconds,
             process_backups=not args.skip_backup_processing,
-            cleanup=not args.keep_artifacts,
+            cleanup=testing or not args.keep_artifacts,
             run_queue_validation=not args.skip_queue_validation,
             run_workload_validation=not args.skip_workload_validation,
             run_live_workload_drift_proof=not args.skip_live_workload_drift_proof,
@@ -3270,55 +3328,73 @@ def main() -> int:
             workload_maintenance_pause_jobs=args.workload_maintenance_pause_jobs,
             inject_maintenance_mode_pause=not args.skip_maintenance_pause_injection,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "run-control-plane-queue-validation":
-        return run_control_plane_queue_validation(
+        result = run_control_plane_queue_validation(
             changed_by=args.by,
-            reason=args.reason,
+            reason=_testing_reason(args.reason, testing),
             queue_success_jobs=args.queue_success_jobs,
             queue_failure_jobs=args.queue_failure_jobs,
             queue_delay_seconds=args.queue_delay_seconds,
             run_inline_queue_worker=not args.no_inline_queue_worker,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "run-live-workload-drift-proof":
-        return run_live_workload_drift_proof(
+        result = run_live_workload_drift_proof(
             changed_by=args.by,
-            reason=args.reason,
-            persist=not args.no_persist,
+            reason=_testing_reason(args.reason, testing),
+            persist=not args.no_persist and not testing,
             snapshot_id=args.snapshot_id,
             audit_id=args.audit_id,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "control-plane-live-workload-target-validation":
         return run_control_plane_live_workload_target_validation()
     if args.command == "run-control-plane-live-workload-target-validation":
-        return run_execute_control_plane_live_workload_target_validation(
+        result = run_execute_control_plane_live_workload_target_validation(
             changed_by=args.by,
-            reason=args.reason,
+            reason=_testing_reason(args.reason, testing),
             timeout_seconds=args.timeout_seconds,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "run-live-workload-target-profile-validation":
-        return run_execute_live_workload_target_profile_validation(
+        result = run_execute_live_workload_target_profile_validation(
             profile=args.profile,
             changed_by=args.by,
-            reason=args.reason,
+            reason=_testing_reason(args.reason, testing),
             timeout_seconds=args.timeout_seconds,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "run-live-workload-target-profile-drift-proof":
-        return run_live_workload_target_profile_drift_proof(
+        result = run_live_workload_target_profile_drift_proof(
             profile=args.profile,
             changed_by=args.by,
-            reason=args.reason,
-            persist=not args.no_persist,
+            reason=_testing_reason(args.reason, testing),
+            persist=not args.no_persist and not testing,
             snapshot_id=args.snapshot_id,
             audit_id=args.audit_id,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "run-live-workload-target-profile-operational-validation":
-        return run_live_workload_target_profile_operational_validation(
+        result = run_live_workload_target_profile_operational_validation(
             profile=args.profile,
             changed_by=args.by,
             expected_backend=args.expected_backend,
-            reason=args.reason,
+            reason=_testing_reason(args.reason, testing),
             process_backups=not args.skip_backup_processing,
-            cleanup=not args.no_cleanup,
+            cleanup=testing or not args.no_cleanup,
             run_queue_validation=not args.skip_queue_validation,
             run_live_workload_drift_proof=not args.skip_live_workload_drift_proof,
             queue_success_jobs=args.queue_success_jobs,
@@ -3331,14 +3407,17 @@ def main() -> int:
             inject_maintenance_mode_pause=not args.skip_maintenance_pause_injection,
             run_worker_recovery_validation=not args.skip_worker_recovery_validation,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "run-live-workload-target-profile-canary-verify":
-        return run_live_workload_target_profile_canary_verify(
+        result = run_live_workload_target_profile_canary_verify(
             profile=args.profile,
             changed_by=args.by,
             expected_backend=args.expected_backend,
-            reason=args.reason,
+            reason=_testing_reason(args.reason, testing),
             process_backups=not args.skip_backup_processing,
-            cleanup=not args.no_cleanup,
+            cleanup=testing or not args.no_cleanup,
             run_queue_validation=not args.skip_queue_validation,
             run_workload_validation=not args.skip_workload_validation,
             run_worker_recovery_validation=not args.skip_worker_recovery_validation,
@@ -3350,23 +3429,32 @@ def main() -> int:
             workload_maintenance_pause_jobs=args.workload_maintenance_pause_jobs,
             inject_maintenance_mode_pause=not args.skip_maintenance_pause_injection,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "list-live-workload-target-profiles":
         return run_list_live_workload_target_profiles()
     if args.command == "export-live-workload-proof-bundle":
-        return run_export_live_workload_proof_bundle(
+        result = run_export_live_workload_proof_bundle(
             changed_by=args.by,
-            reason=args.reason,
+            reason=_testing_reason(args.reason, testing),
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "list-live-workload-proof-bundles":
         return run_list_live_workload_proof_bundles()
     if args.command == "inspect-live-workload-proof-bundle":
         return run_inspect_live_workload_proof_bundle(path=args.path)
     if args.command == "prune-live-workload-proof-bundles":
-        return run_prune_live_workload_proof_bundles(
+        result = run_prune_live_workload_proof_bundles(
             changed_by=args.by,
-            reason=args.reason,
+            reason=_testing_reason(args.reason, testing),
             retention_days=args.retention_days,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "delete-live-workload-proof-bundle":
         return run_delete_live_workload_proof_bundle(
             path=args.path,
@@ -3386,10 +3474,13 @@ def main() -> int:
     if args.command == "control-plane-observability-export-validation":
         return run_control_plane_observability_export_validation()
     if args.command == "export-control-plane-observability":
-        return run_control_plane_observability_export(
+        result = run_control_plane_observability_export(
             changed_by=args.by,
-            reason=args.reason,
+            reason=_testing_reason(args.reason, testing),
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "list-control-plane-observability-exports":
         return run_list_control_plane_observability_exports()
     if args.command == "control-plane-backup-export-validation":
@@ -3397,11 +3488,14 @@ def main() -> int:
     if args.command == "list-control-plane-backups":
         return run_list_control_plane_backups()
     if args.command == "process-control-plane-backups":
-        return run_process_control_plane_backups(
+        result = run_process_control_plane_backups(
             changed_by=args.by,
-            reason=args.reason,
+            reason=_testing_reason(args.reason, testing),
             force=args.force,
         )
+        if testing:
+            _run_testing_cleanup()
+        return result
     if args.command == "control-plane-deployment-readiness":
         return run_control_plane_deployment_readiness()
     if args.command == "control-plane-trust-score":
