@@ -1,21 +1,13 @@
 #!/usr/bin/env python3
 """PostToolUse hook.
 
-Reads the tool-call JSON Claude Code sends on stdin, classifies it into a
-small ObservedEvent, and appends ONE line of JSON to a per-session trace
-file. Deliberately captures paths and commands, never full file contents or
-diffs -- this is the fix for the GB-scale-log problem: a session's entire
-trace file should be kilobytes, not megabytes, because we only ever store
-metadata about what happened, not the data itself.
-
-Exit code 0 always: this hook only observes, it never blocks a tool call.
-Blocking (deny on the high-risk patterns) is a natural v2 addition once the
-detection logic has real sessions behind it -- shipping it as observe-only
-first means adopting this tool costs nothing and can't break anyone's flow.
+Reads the tool-call JSON Claude Code sends on stdin, classifies it into an
+ObservedEvent with execution outcome, and appends ONE line of JSON to a per-session trace file.
 """
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -38,29 +30,59 @@ def classify(tool_name: str, tool_input: dict) -> tuple[str, str, str] | None:
     return None
 
 
+def parse_tool_response(response: object) -> tuple[bool, int | None, str]:
+    """Extracts (success, exit_code, output_snippet) from tool_response."""
+    if response is None:
+        return True, 0, ""
+    if isinstance(response, dict):
+        exit_code = response.get("exit_code", response.get("exitCode", response.get("status")))
+        is_error = bool(response.get("is_error", response.get("error", False)))
+        if exit_code is not None and exit_code != 0:
+            is_error = True
+        snippet = str(response.get("stderr") or response.get("stdout") or response.get("output") or "")[:200]
+        return (not is_error), exit_code, snippet
+    if isinstance(response, str):
+        err = bool(re.search(r"\b(error|failed|permission denied|not found)\b", response, re.I))
+        return (not err), (1 if err else 0), response[:200]
+    return True, 0, str(response)[:200]
+
+
 def main() -> int:
     try:
-        payload = json.load(sys.stdin)
-    except json.JSONDecodeError:
+        raw_text = sys.stdin.read()
+        payload = json.loads(raw_text) if raw_text.strip() else {}
+    except Exception:
         return 0
 
     session_id = str(payload.get("session_id", "unknown-session"))
     tool_name = str(payload.get("tool_name", ""))
     tool_input = payload.get("tool_input") or {}
+    tool_response = payload.get("tool_response")
+
+    STATE_DIR.mkdir(exist_ok=True)
+    raw_log = STATE_DIR / "raw_stdin.jsonl"
+    with raw_log.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"hook": "PostToolUse", "payload": payload}) + "\n")
 
     classified = classify(tool_name, tool_input)
     if classified is None:
         return 0
     target, command, label = classified
+    success, exit_code, snippet = parse_tool_response(tool_response)
 
     event = {
         "function": f"session:{session_id}",
         "event_type": "mutation",
         "target": target,
-        "metadata": {"tool_name": label, "command": command},
+        "metadata": {
+            "tool_name": label,
+            "command": command,
+            "success": success,
+            "exit_code": exit_code,
+            "output_snippet": snippet,
+        },
     }
 
-    STATE_DIR.mkdir(exist_ok=True)
     trace_file = STATE_DIR / f"{session_id}.trace.jsonl"
     with trace_file.open("a", encoding="utf-8") as f:
         f.write(json.dumps(event) + "\n")

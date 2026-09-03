@@ -83,14 +83,25 @@ class MutationComparator:
 
             if destructive_hit is not None:
                 contradicts_stated_rule = bool(constraints)
+                success = event.metadata.get("success", True)
+                exit_code = event.metadata.get("exit_code", 0)
+
+                if success is False:
+                    severity = "high" if contradicts_stated_rule else "medium"
+                    status_note = f" (execution failed with exit_code={exit_code}; attempted destructive action)"
+                else:
+                    severity = "critical" if contradicts_stated_rule else "high"
+                    status_note = ""
+
                 alerts.append(
                     DriftAlert(
                         function=event.function,
                         observed_target=target,
                         expected_targets=list(scope.known_paths),
-                        severity="critical" if contradicts_stated_rule else "high",
+                        severity=severity,
                         reason=(
                             f"Action matches a destructive pattern ('{destructive_hit}')"
+                            + status_note
                             + (
                                 f" and the session's own task description contains an explicit "
                                 f"constraint that this appears to violate: \"{constraints[0]}\"."

@@ -2,16 +2,7 @@
 """UserPromptSubmit hook.
 
 Reads the JSON Claude Code sends on stdin for this event, pulls out the raw
-prompt text, and appends it to a small per-session scope file. This is the
-only place intent-guard learns what the human actually asked for -- there is
-no separate policy file to maintain.
-
-Field names below (`prompt`, `session_id`) follow the current Claude Code
-hooks reference as of this writing. If Anthropic changes the schema, this is
-the one file that needs updating -- verify against
-https://code.claude.com/docs/en/hooks before relying on this in production.
-
-Exit code 0 always: this hook only observes, it never blocks a prompt.
+prompt text, and appends it to a small per-session scope file.
 """
 from __future__ import annotations
 
@@ -24,16 +15,22 @@ STATE_DIR = Path(".intent-guard")
 
 def main() -> int:
     try:
-        payload = json.load(sys.stdin)
-    except json.JSONDecodeError:
+        raw_text = sys.stdin.read()
+        payload = json.loads(raw_text) if raw_text.strip() else {}
+    except Exception:
         return 0
 
     session_id = str(payload.get("session_id", "unknown-session"))
     prompt_text = str(payload.get("prompt", ""))
+
+    STATE_DIR.mkdir(exist_ok=True)
+    raw_log = STATE_DIR / "raw_stdin.jsonl"
+    with raw_log.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"hook": "UserPromptSubmit", "payload": payload}) + "\n")
+
     if not prompt_text.strip():
         return 0
 
-    STATE_DIR.mkdir(exist_ok=True)
     scope_file = STATE_DIR / f"{session_id}.scope.jsonl"
     with scope_file.open("a", encoding="utf-8") as f:
         f.write(json.dumps({"prompt": prompt_text}) + "\n")

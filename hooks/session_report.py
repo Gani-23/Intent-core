@@ -75,13 +75,19 @@ def load_scope(path: Path) -> SessionScope:
 
 def main() -> int:
     try:
-        payload = json.load(sys.stdin)
-    except json.JSONDecodeError:
+        raw_text = sys.stdin.read()
+        payload = json.loads(raw_text) if raw_text.strip() else {}
+    except Exception:
         return 0
 
     session_id = str(payload.get("session_id", "unknown-session"))
     trace_path = STATE_DIR / f"{session_id}.trace.jsonl"
     scope_path = STATE_DIR / f"{session_id}.scope.jsonl"
+
+    STATE_DIR.mkdir(exist_ok=True)
+    raw_log = STATE_DIR / "raw_stdin.jsonl"
+    with raw_log.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"hook": "Stop", "payload": payload}) + "\n")
 
     events = load_events(trace_path)
     scope = load_scope(scope_path)
