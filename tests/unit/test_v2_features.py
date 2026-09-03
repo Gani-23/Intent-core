@@ -236,12 +236,32 @@ class TestSyscallBridge(unittest.TestCase):
         self.assertIn(cap.mode, [BMode.FULL, BMode.FILESYSTEM, BMode.UNAVAILABLE])
         self.assertIsInstance(cap.available, bool)
         self.assertIsInstance(cap.reason, str)
+        self.assertIsInstance(cap.engine, str)
 
     def test_observe_invalid_pid_returns_empty(self):
         from lsa.drift.syscall_bridge import observe_process
         events, mode = observe_process(pid=9999999, duration_seconds=0.1)
         self.assertIsInstance(events, list)
         self.assertIn(mode, [BMode.FULL, BMode.FILESYSTEM, BMode.UNAVAILABLE])
+
+    def test_observe_self_pid_finds_open_files(self):
+        from lsa.drift.syscall_bridge import observe_process
+        with open(__file__, "r") as f:
+            events, mode = observe_process(pid=os.getpid(), duration_seconds=0.5)
+            self.assertIsInstance(events, list)
+            if mode == BMode.FILESYSTEM:
+                targets = [e.target for e in events]
+                # Either libproc or lsof captures the current file
+                self.assertTrue(any("test_v2_features.py" in t for t in targets))
+
+    def test_observe_macos_libproc_direct(self):
+        from lsa.drift.syscall_bridge import observe_pid_macos_libproc, _IS_MACOS
+        if _IS_MACOS:
+            with open(__file__, "r") as f:
+                events = observe_pid_macos_libproc(os.getpid())
+                self.assertIsInstance(events, list)
+                targets = [e.target for e in events]
+                self.assertTrue(any("test_v2_features.py" in t for t in targets))
 
 
 # ── PreToolUse hook ───────────────────────────────────────────────────────────
