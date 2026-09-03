@@ -1,0 +1,10 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "intent-guard",
+  "version": "0.1.0",
+  "description": "Runtime semantic drift auditor for AI coding agent sessions",
+  "author": {
+    "name": "gani-23"
+  },
+  "hooks": "./hooks/hooks.json"
+}
