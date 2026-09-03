@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+from lsa.drift.models import DriftAlert, ObservedEvent
+
+# Irreversible or wide-blast-radius actions. These fire even on a session
+# with no declared scope at all, because "delete production data" is not a
+# risk that should require the human to have pre-declared it as off-limits.
+DESTRUCTIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("filesystem-wide delete", re.compile(r"\brm\s+-[a-z]*r[a-z]*f\b|\brm\s+-[a-z]*f[a-z]*r\b", re.I)),
+    ("force push", re.compile(r"\bgit\s+push\b.*(--force|-f)\b", re.I)),
+    ("sql destructive", re.compile(r"\b(drop\s+table|drop\s+database|truncate\s+table|delete\s+from\s+\S+\s*;?\s*$)", re.I)),
+    ("migration reset", re.compile(r"\bmigrate\s+(diff|reset)\b.*shadow", re.I)),
+    ("permissive chmod", re.compile(r"\bchmod\s+(-R\s+)?777\b", re.I)),
+]
+
+# Worth a note, not inherently destructive -- and suppressed entirely when
+# the target is something the human's own task already named, since touching
+# a credential file the task is literally about is expected, not drift.
+SENSITIVE_TOUCH_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("credential file touch", re.compile(r"\.env(\.\w+)?$|\bid_rsa\b|\bcredentials\.json\b", re.I)),
+]
+
+# Phrases that, if present in the human's own task description, establish an
+# explicit negative constraint. If a later action's target/command matches
+# one of these, that is not "unexpected" -- it is a direct contradiction of
+# something the human already said. This is the exact shape of the PocketOS
+# and Replit incidents: the agent had the rule, and broke it anyway.
+CONSTRAINT_PHRASES: list[re.Pattern[str]] = [
+    re.compile(r"\b(do not|don't|never)\b.{0,40}\b(delete|drop|truncate|wipe|remove)\b", re.I),
+    re.compile(r"\bcode freeze\b", re.I),
+    re.compile(r"\bread[- ]only\b", re.I),
+    re.compile(r"\bwithout (my )?(explicit )?approval\b", re.I),
+    re.compile(r"\bdo not touch (prod|production)\b", re.I),
+    re.compile(r"\bnever run destructive\b", re.I),
+]
+
+
+@dataclass(slots=True)
+class SessionScope:
+    """What the human actually declared, in their own words, at the start
+    of (or during) the session. Deliberately text-based rather than a
+    structured policy file -- v1 works with whatever the human already
+    typed, instead of asking them to maintain a second source of truth."""
+
+    task_text: str
+    known_paths: list[str] = field(default_factory=list)
+
+    @property
+    def declared_constraints(self) -> list[str]:
+        return [m.group(0) for pattern in CONSTRAINT_PHRASES for m in pattern.finditer(self.task_text)]
+
+
+class MutationComparator:
+    """Compares observed file/shell/MCP actions in a session against the
+    scope the human actually declared. Complements DriftComparator, which
+    only looks at event_type == 'network'. This looks at event_type ==
+    'mutation'."""
+
+    def compare(self, scope: SessionScope, events: list[ObservedEvent]) -> list[DriftAlert]:
+        alerts: list[DriftAlert] = []
+        constraints = scope.declared_constraints
+
+        for event in events:
+            if event.event_type != "mutation":
+                continue
+
+            command = event.metadata.get("command", "")
+            target = event.target
+            haystack = f"{command} {target}"
+            in_declared_scope = any(path and path in target for path in scope.known_paths)
+
+            destructive_hit = next(
+                (label for label, pattern in DESTRUCTIVE_PATTERNS if pattern.search(haystack)),
+                None,
+            )
+            sensitive_hit = next(
+                (label for label, pattern in SENSITIVE_TOUCH_PATTERNS if pattern.search(haystack)),
+                None,
+            )
+
+            if destructive_hit is not None:
+                contradicts_stated_rule = bool(constraints)
+                alerts.append(
+                    DriftAlert(
+                        function=event.function,
+                        observed_target=target,
+                        expected_targets=list(scope.known_paths),
+                        severity="critical" if contradicts_stated_rule else "high",
+                        reason=(
+                            f"Action matches a destructive pattern ('{destructive_hit}')"
+                            + (
+                                f" and the session's own task description contains an explicit "
+                                f"constraint that this appears to violate: \"{constraints[0]}\"."
+                                if contradicts_stated_rule
+                                else ", which carries irreversible risk regardless of stated scope."
+                            )
+                        ),
+                    )
+                )
+            elif sensitive_hit is not None and not in_declared_scope:
+                alerts.append(
+                    DriftAlert(
+                        function=event.function,
+                        observed_target=target,
+                        expected_targets=list(scope.known_paths),
+                        severity="medium",
+                        reason=(
+                            f"Touched a sensitive file ('{sensitive_hit}') that wasn't named "
+                            f"anywhere in the task description."
+                        ),
+                    )
+                )
+            elif not in_declared_scope and scope.known_paths:
+                alerts.append(
+                    DriftAlert(
+                        function=event.function,
+                        observed_target=target,
+                        expected_targets=list(scope.known_paths),
+                        severity="medium",
+                        reason="Target was not mentioned anywhere in the task description or prior scope.",
+                    )
+                )
+
+        return alerts
