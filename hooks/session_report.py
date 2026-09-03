@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
-"""Stop hook.
+"""Stop hook — runs v2 full analysis pipeline at session end.
 
-Runs at the end of a Claude Code turn. Loads this session's declared scope
-and observed mutation events, compares them, and -- only if something was
-flagged -- writes a short markdown report and prints a summary that Claude
-Code surfaces back to the user via systemMessage.
+Pass 1: Regex mutation rules (mutation_rules.py + IntentFingerprint)
+Pass 2: Semantic LLM review (multi-provider failsafe)
+Pass 3: Invariant violations (pre-stated contracts)
+Pass 4: Prompt injection signals (causal Read → action analysis)
+Pass 5: Cross-session ledger update + pattern analysis
 
-If nothing was flagged, this hook is silent and near-instant. It should
-never be the thing that makes agentic coding feel slower.
-
-After reporting, the raw per-session trace/scope files are deleted. This is
-deliberate: intent-guard is meant to catch drift at the moment it happens,
-not accumulate an ever-growing log directory. Anyone who wants a permanent
-audit trail should redirect the printed report to their own storage --
-that's a hosted-tier feature, not something to bolt on by default.
+Exit code 0 always: observe-only, never blocks.
 """
 from __future__ import annotations
 
@@ -25,19 +19,20 @@ from pathlib import Path
 PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(PLUGIN_ROOT))
 
-from lsa.core.models import FunctionIntent  # noqa: E402
-from lsa.drift.mutation_rules import MutationComparator, SessionScope  # noqa: E402
-from lsa.drift.models import ObservedEvent  # noqa: E402
-from lsa.drift.semantic_review import SemanticSessionReviewer  # noqa: E402
-from lsa.remediation.llm_client import build_remediation_client  # noqa: E402
+from lsa.core.models import FunctionIntent
+from lsa.drift.mutation_rules import MutationComparator, SessionScope
+from lsa.drift.models import ObservedEvent
+from lsa.drift.semantic_review import SemanticSessionReviewer
+from lsa.drift.intent_fingerprint import extract_fingerprint
+from lsa.drift.invariant_checker import check_invariants, load_invariants
+from lsa.drift.injection_detector import detect_injection
+from lsa.drift.session_ledger import append_to_ledger, load_ledger, analyze_ledger
+from lsa.remediation.llm_client import build_remediation_client
 
 STATE_DIR = Path(".intent-guard")
 
 
 class _Settings:
-    """Minimal stand-in for LSA's settings object -- enables multi-provider
-    failsafe fallback across Anthropic, OpenAI, Gemini, and Antigravity."""
-
     def __init__(self) -> None:
         self.remediation_provider = os.environ.get("INTENT_GUARD_PROVIDER", "failsafe")
         self.remediation_model = os.environ.get("INTENT_GUARD_MODEL")
@@ -59,18 +54,24 @@ def load_events(path: Path) -> list[ObservedEvent]:
     events = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
-            events.append(ObservedEvent.from_dict(json.loads(line)))
+            try:
+                events.append(ObservedEvent.from_dict(json.loads(line)))
+            except Exception:
+                pass
     return events
 
 
-def load_scope(path: Path) -> SessionScope:
+def load_scope_text(path: Path) -> str:
     if not path.exists():
-        return SessionScope(task_text="")
+        return ""
     prompts = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
-            prompts.append(json.loads(line).get("prompt", ""))
-    return SessionScope(task_text="\n".join(prompts))
+            try:
+                prompts.append(json.loads(line).get("prompt", ""))
+            except Exception:
+                pass
+    return "\n".join(prompts)
 
 
 def main() -> int:
@@ -85,58 +86,117 @@ def main() -> int:
     scope_path = STATE_DIR / f"{session_id}.scope.jsonl"
 
     STATE_DIR.mkdir(exist_ok=True)
-    raw_log = STATE_DIR / "raw_stdin.jsonl"
-    with raw_log.open("a", encoding="utf-8") as f:
+    with (STATE_DIR / "raw_stdin.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps({"hook": "Stop", "payload": payload}) + "\n")
 
     events = load_events(trace_path)
-    scope = load_scope(scope_path)
+    task_text = load_scope_text(scope_path)
+    scope = SessionScope(task_text=task_text)
 
     if not events:
+        trace_path.unlink(missing_ok=True)
+        scope_path.unlink(missing_ok=True)
         return 0
 
+    fp = extract_fingerprint(task_text)
+
+    # ── Pass 1: Regex mutation rules ──────────────────────────────────────────
     rule_alerts = MutationComparator().compare(scope, events)
 
+    # ── Pass 2: Semantic LLM review ───────────────────────────────────────────
     settings = _Settings()
     reviewer = SemanticSessionReviewer(
         model=settings.remediation_model,
         preferred_provider=settings.remediation_provider,
     )
     semantic_alerts = reviewer.review(scope, events)
-
     seen_targets = {a.observed_target for a in rule_alerts}
-    alerts = rule_alerts + [a for a in semantic_alerts if a.observed_target not in seen_targets]
+    all_alerts = rule_alerts + [a for a in semantic_alerts if a.observed_target not in seen_targets]
+    all_alerts = sorted(all_alerts, key=lambda a: {"critical": 0, "high": 1, "medium": 2}.get(a.severity, 3))
 
-    if alerts:
-        alerts = sorted(alerts, key=lambda a: {"critical": 0, "high": 1, "medium": 2}.get(a.severity, 3))
+    # ── Pass 3: Invariant checking ────────────────────────────────────────────
+    invariants = load_invariants(session_id)
+    invariant_violations = check_invariants(session_id, events, invariants)
+
+    # ── Pass 4: Injection detection ───────────────────────────────────────────
+    alert_targets = [a.observed_target for a in all_alerts]
+    injection_signals = detect_injection(
+        session_id, events, fp.authorized_paths, alert_targets
+    )
+
+    # ── Pass 5: Ledger — append entries + check cross-session patterns ────────
+    for event in events:
+        sev = next(
+            (a.severity for a in all_alerts if a.observed_target == event.target),
+            "none",
+        )
+        append_to_ledger(session_id, event, sev)
+    ledger_entries = load_ledger()
+    ledger_patterns = analyze_ledger(ledger_entries)
+
+    # ── Build report ──────────────────────────────────────────────────────────
+    has_findings = any([all_alerts, invariant_violations, injection_signals, ledger_patterns])
+    if has_findings:
         client = build_remediation_client(_Settings())
-        placeholder_function = FunctionIntent(
+        placeholder = FunctionIntent(
             name=session_id, module="session", qualname=f"session:{session_id}",
             lineno=0, end_lineno=0,
         )
-        lines = [f"# intent-guard session report ({session_id})", ""]
-        for alert in alerts:
+        lines = [f"# intent-guard session report ({session_id})\n"]
+
+        for alert in all_alerts:
             prompt = (
-                f"Task description:\n{scope.task_text}\n\n"
+                f"Task description:\n{task_text}\n\n"
                 f"Flagged action: {alert.observed_target}\nSeverity: {alert.severity}\n"
                 f"Reason: {alert.reason}\nWrite a short remediation report."
             )
-            report = client.analyze(placeholder_function, alert, prompt)
+            report = client.analyze(placeholder, alert, prompt)
             lines.append(report.to_markdown())
+
+        if invariant_violations:
+            lines.append("## ⚠️ Invariant Violations (Pre-Stated Contracts Broken)\n")
+            for v in invariant_violations:
+                lines.append(f"- **[{v.severity.upper()}]** `{v.observed_target}` violated: _{v.invariant_description}_\n")
+
+        if injection_signals:
+            lines.append("## 🚨 Prompt Injection Signals\n")
+            for s in injection_signals:
+                lines.append(
+                    f"- **[confidence={s.confidence:.0%}]** Agent read `{s.read_target}` "
+                    f"then performed out-of-scope action on `{s.triggered_action}`. "
+                    f"Possible prompt injection via file content.\n"
+                )
+
+        if ledger_patterns:
+            lines.append("## 📊 Cross-Session Behavioral Patterns\n")
+            for p in ledger_patterns:
+                lines.append(f"- **[{p.severity.upper()}] {p.pattern}**: {p.description}\n")
 
         report_dir = STATE_DIR / "reports"
         report_dir.mkdir(parents=True, exist_ok=True)
         report_path = report_dir / f"{session_id}.md"
         report_path.write_text("\n".join(lines), encoding="utf-8")
 
+        top_sev = all_alerts[0].severity if all_alerts else ("critical" if invariant_violations else "high")
+        extras = []
+        if invariant_violations:
+            extras.append(f"{len(invariant_violations)} invariant violation(s)")
+        if injection_signals:
+            extras.append(f"{len(injection_signals)} injection signal(s)")
+        if ledger_patterns:
+            extras.append(f"{len(ledger_patterns)} cross-session pattern(s)")
+        extra_str = (", " + ", ".join(extras)) if extras else ""
         summary = (
-            f"intent-guard flagged {len(alerts)} action(s) this session "
-            f"(highest severity: {alerts[0].severity}). Full report: {report_path}"
+            f"intent-guard flagged {len(all_alerts)} action(s){extra_str} this session "
+            f"(highest severity: {top_sev}). Full report: {report_path}"
         )
         print(json.dumps({"systemMessage": summary}))
 
     trace_path.unlink(missing_ok=True)
     scope_path.unlink(missing_ok=True)
+    (STATE_DIR / f"{session_id}.sig").unlink(missing_ok=True)
+    (STATE_DIR / f"{session_id}.invariants.json").unlink(missing_ok=True)
+    (STATE_DIR / f"{session_id}.pretool.jsonl").unlink(missing_ok=True)
     return 0
 
 

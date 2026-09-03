@@ -157,3 +157,80 @@ class TraceSessionSummary:
             correlation_fields=list(payload.get("correlation_fields", [])),
             drift_targets=list(payload.get("drift_targets", [])),
         )
+
+
+# ── v2 models ─────────────────────────────────────────────────────────────────
+
+@dataclass(slots=True)
+class LedgerEntry:
+    """One action written to the cross-session behavioral ledger."""
+    ts: str
+    session_id: str
+    action_hash: str
+    target: str
+    op: str        # READ | WRITE | EXEC | DELETE | NETWORK | OTHER
+    severity: str  # critical | high | medium | low | none
+
+    def to_dict(self) -> dict:
+        return {"ts": self.ts, "session_id": self.session_id,
+                "action_hash": self.action_hash, "target": self.target,
+                "op": self.op, "severity": self.severity}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "LedgerEntry":
+        return cls(ts=d["ts"], session_id=d["session_id"],
+                   action_hash=d["action_hash"], target=d["target"],
+                   op=d["op"], severity=d["severity"])
+
+
+@dataclass(slots=True)
+class Invariant:
+    """A pre-flight behavioral contract auto-generated from an intent prompt."""
+    description: str
+    op_class: str       # NEVER_EXEC | NEVER_WRITE_PATH | NEVER_DELETE | NEVER_NETWORK
+    pattern_str: str    # raw pattern string (serialisable)
+    is_hard: bool = True
+
+    def to_dict(self) -> dict:
+        return {"description": self.description, "op_class": self.op_class,
+                "pattern_str": self.pattern_str, "is_hard": self.is_hard}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Invariant":
+        return cls(description=d["description"], op_class=d["op_class"],
+                   pattern_str=d["pattern_str"], is_hard=d.get("is_hard", True))
+
+
+@dataclass(slots=True)
+class InvariantViolation:
+    """An observed action that breaks a pre-stated invariant."""
+    invariant_description: str
+    observed_target: str
+    session_id: str
+    severity: str = "critical"
+
+    def to_dict(self) -> dict:
+        return {"invariant_description": self.invariant_description,
+                "observed_target": self.observed_target,
+                "session_id": self.session_id, "severity": self.severity}
+
+
+@dataclass(slots=True)
+class InjectionSignal:
+    """Evidence that a Read event may have injected instructions into the agent."""
+    read_target: str
+    triggered_action: str
+    confidence: float   # 0.0–1.0
+    session_id: str
+
+    def to_dict(self) -> dict:
+        return {"read_target": self.read_target,
+                "triggered_action": self.triggered_action,
+                "confidence": self.confidence, "session_id": self.session_id}
+
+
+class ObservationMode:
+    """Syscall bridge observation capability level."""
+    FULL = "full"
+    FILESYSTEM = "fs"
+    UNAVAILABLE = "none"

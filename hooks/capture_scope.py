@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""UserPromptSubmit hook.
-
-Reads the JSON Claude Code sends on stdin for this event, pulls out the raw
-prompt text, and appends it to a small per-session scope file.
-"""
+"""UserPromptSubmit hook — captures task scope, signs manifest, generates invariants."""
 from __future__ import annotations
 
 import json
@@ -24,16 +20,34 @@ def main() -> int:
     prompt_text = str(payload.get("prompt", ""))
 
     STATE_DIR.mkdir(exist_ok=True)
-    raw_log = STATE_DIR / "raw_stdin.jsonl"
-    with raw_log.open("a", encoding="utf-8") as f:
+    with (STATE_DIR / "raw_stdin.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps({"hook": "UserPromptSubmit", "payload": payload}) + "\n")
 
     if not prompt_text.strip():
         return 0
 
+    # ── 1. Write scope file ───────────────────────────────────────────────────
     scope_file = STATE_DIR / f"{session_id}.scope.jsonl"
     with scope_file.open("a", encoding="utf-8") as f:
         f.write(json.dumps({"prompt": prompt_text}) + "\n")
+
+    # ── 2. Sign the manifest (HMAC) ───────────────────────────────────────────
+    try:
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from lsa.drift.manifest_signer import write_sig_file
+        write_sig_file(session_id, prompt_text)
+    except Exception:
+        pass
+
+    # ── 3. Generate and save invariants ──────────────────────────────────────
+    try:
+        from lsa.drift.intent_fingerprint import extract_fingerprint
+        from lsa.drift.invariant_checker import generate_invariants, save_invariants
+        fp = extract_fingerprint(prompt_text)
+        invariants = generate_invariants(fp)
+        save_invariants(session_id, invariants)
+    except Exception:
+        pass
 
     return 0
 
