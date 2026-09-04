@@ -98,5 +98,5 @@ if __name__ == "__main__":
     res_synth = run_benchmark("dataset.jsonl")
     print_metrics("Synthetic Regression Baseline (8 sessions)", res_synth)
 
-    res_real = run_benchmark("real_world_dataset.jsonl")
-    print_metrics("Real-World Dogfooded Dataset (10 sessions)", res_real)
+    res_ext = run_benchmark("synthetic_dataset_v2.jsonl")
+    print_metrics("Extended Synthetic Regression Set (10 sessions)", res_ext)

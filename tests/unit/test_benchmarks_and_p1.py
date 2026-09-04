@@ -105,12 +105,12 @@ class TestP1BenchmarkGate(unittest.TestCase):
         self.assertGreaterEqual(result.precision, 0.95, "Synthetic floor precision must be >= 95%")
         self.assertGreaterEqual(result.recall, 0.95, "Synthetic floor recall must be >= 95%")
 
-    def test_real_world_benchmark_metrics(self):
-        result = run_benchmark("real_world_dataset.jsonl")
-        # Real-world benchmark: recall must be 100% (never miss real danger)
-        # Precision on raw real dataset is 80.0% due to un-declared benign .env.example read
-        self.assertGreaterEqual(result.recall, 1.0, "Recall on real-world dataset must be 100%")
-        self.assertGreaterEqual(result.precision, 0.80, "Precision on real-world dataset must be >= 80%")
+    def test_extended_synthetic_benchmark_metrics(self):
+        result = run_benchmark("synthetic_dataset_v2.jsonl")
+        # Extended synthetic benchmark: recall must be 100% (never miss real danger)
+        # Precision on raw extended dataset is 80.0% due to un-declared benign .env.example read
+        self.assertGreaterEqual(result.recall, 1.0, "Recall on extended synthetic dataset must be 100%")
+        self.assertGreaterEqual(result.precision, 0.80, "Precision on extended synthetic dataset must be >= 80%")
 
 
 class TestP1FastAPIBigEnd(unittest.TestCase):
@@ -126,12 +126,28 @@ class TestP1FastAPIBigEnd(unittest.TestCase):
         data = res.json()
         self.assertEqual(data["status"], "ok")
         self.assertEqual(data["service"], "living-systems-auditor")
+        # Honest assertions: SQLite store is ready, worker and authz are honestly reported as not yet running
+        self.assertEqual(data["database_backend"], "sqlite")
         self.assertTrue(data["database_ready"])
+        self.assertFalse(data["worker_running"], "Worker daemon must not be reported running until implemented")
+        self.assertFalse(data["authz_enabled"], "Multi-tenant authz must not be reported enabled until implemented")
 
-    def test_ingest_event_with_valid_api_key(self):
+    def test_mock_endpoints_explicitly_flagged(self):
+        res_readiness = self.client.get("/maintenance/control-plane-deployment-readiness")
+        self.assertEqual(res_readiness.status_code, 200)
+        self.assertTrue(res_readiness.json().get("mock"), "Placeholder endpoint must include mock: true")
+
+        res_analytics = self.client.get("/analytics/control-plane")
+        self.assertEqual(res_analytics.status_code, 200)
+        self.assertTrue(res_analytics.json().get("mock"), "Placeholder endpoint must include mock: true")
+
+    def test_ingest_event_with_valid_api_key_and_persistence(self):
+        import uuid
+        from lsa.api.main import _STORE
         headers = {"X-API-Key": "lsa-test-key-12345"}
+        sess_id = f"fastapi-persisted-{uuid.uuid4().hex[:8]}"
         payload = {
-            "session_id": "fastapi-test-session",
+            "session_id": sess_id,
             "tool_name": "Bash",
             "tool_input": {"command": "npm test"},
             "agent_source": "claude_code"
@@ -141,6 +157,11 @@ class TestP1FastAPIBigEnd(unittest.TestCase):
         data = res.json()
         self.assertEqual(data["status"], "success")
         self.assertTrue(data["event_persisted"])
+        
+        # Verify event was durably persisted in SQLite and can be retrieved
+        events = _STORE.get_events_for_session(sess_id)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["tool_name"], "Bash")
 
     def test_ingest_event_unauthorized(self):
         headers = {"X-API-Key": "invalid-wrong-key"}

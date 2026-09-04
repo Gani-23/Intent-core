@@ -36,10 +36,22 @@ def verify_api_key(x_api_key: str | None = Header(None)) -> str:
     return x_api_key
 
 
+from lsa.storage.sqlite_store import SQLiteEventStore
+
+_STORE = SQLiteEventStore()
+
+
 @app.get("/health", response_model=HealthResponse)
 def get_health() -> HealthResponse:
-    """Health check endpoint matching dashboard contract."""
-    return HealthResponse()
+    """Health check endpoint reporting actual runtime subsystem state."""
+    db_healthy = _STORE.is_healthy()
+    return HealthResponse(
+        status="ok" if db_healthy else "degraded",
+        database_ready=db_healthy,
+        database_backend="sqlite",
+        authz_enabled=False,
+        worker_running=False,
+    )
 
 
 @app.post("/api/v1/sessions/events", response_model=IngestSessionEventResponse)
@@ -47,7 +59,7 @@ def ingest_session_event(
     req: IngestSessionEventRequest,
     _auth: str = Depends(verify_api_key),
 ) -> IngestSessionEventResponse:
-    """Ingest live agent events from Claude Code, Cursor, or Webhooks."""
+    """Ingest and durably persist live agent events from Claude Code, Cursor, or Webhooks."""
     # 1. Select adapter
     if req.agent_source == "cursor":
         adapter = CursorAgentAdapter()
@@ -65,18 +77,36 @@ def ingest_session_event(
     redacted_payload = redact_json_obj(payload)
     event = adapter.parse_event(redacted_payload)
 
+    # 2. Persist to SQLite store
+    persisted = False
+    if event is not None:
+        try:
+            row_id = _STORE.store_event(
+                session_id=req.session_id,
+                agent_source=req.agent_source,
+                tool_name=req.tool_name,
+                target=event.target,
+                payload=redacted_payload,
+                organization_name=req.organization_name,
+            )
+            persisted = row_id > 0
+        except Exception:
+            persisted = False
+
     return IngestSessionEventResponse(
-        status="success",
+        status="success" if persisted else "error",
         session_id=req.session_id,
-        event_persisted=bool(event is not None),
+        event_persisted=persisted,
         discrepancy_alert=False,
     )
 
 
-# Dashboard compatibility mock stubs
+# Dashboard compatibility mock stubs (explicitly flagged mock: true per F3)
 @app.get("/maintenance/control-plane-deployment-readiness")
 def get_deployment_readiness():
     return {
+        "mock": True,
+        "mock_notice": "Placeholder endpoint for enterprise deployment readiness review queue",
         "evaluated_at": "2026-09-04T00:00:00Z",
         "environment_name": "production",
         "runtime_validation": {"status": "healthy", "blockers": []},
@@ -94,11 +124,13 @@ def get_deployment_readiness():
 @app.get("/analytics/control-plane")
 def get_analytics(days: int = 14):
     return {
+        "mock": True,
+        "mock_notice": "Placeholder endpoint for control plane analytics metrics",
         "generated_at": "2026-09-04T00:00:00Z",
         "days": days,
         "active_organizations": 1,
-        "total_audits_recorded": 120,
-        "total_drift_incidents": 2,
+        "total_audits_recorded": 0,
+        "total_drift_incidents": 0,
     }
 
 
