@@ -59,10 +59,12 @@ def main() -> int:
     tool_input = payload.get("tool_input") or {}
     tool_response = payload.get("tool_response")
 
-    STATE_DIR.mkdir(exist_ok=True)
-    raw_log = STATE_DIR / "raw_stdin.jsonl"
-    with raw_log.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"hook": "PostToolUse", "payload": payload}) + "\n")
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    try:
+        from lsa.drift.redaction import append_redacted_raw_log
+        append_redacted_raw_log(STATE_DIR, "PostToolUse", payload)
+    except Exception:
+        pass
 
     classified = classify(tool_name, tool_input)
     if classified is None:

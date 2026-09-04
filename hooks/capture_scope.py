@@ -19,9 +19,12 @@ def main() -> int:
     session_id = str(payload.get("session_id", "unknown-session"))
     prompt_text = str(payload.get("prompt", ""))
 
-    STATE_DIR.mkdir(exist_ok=True)
-    with (STATE_DIR / "raw_stdin.jsonl").open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"hook": "UserPromptSubmit", "payload": payload}) + "\n")
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    try:
+        from lsa.drift.redaction import append_redacted_raw_log
+        append_redacted_raw_log(STATE_DIR, "UserPromptSubmit", payload)
+    except Exception:
+        pass
 
     if not prompt_text.strip():
         return 0

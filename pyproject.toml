@@ -12,13 +12,14 @@ authors = [
   { name = "Gani" }
 ]
 license = { text = "Apache-2.0" }
-dependencies = [
+dependencies = []
+
+[project.optional-dependencies]
+api = [
   "fastapi>=0.115.0",
   "pydantic>=2.8.0",
   "uvicorn>=0.30.0",
 ]
-
-[project.optional-dependencies]
 dev = [
   "httpx>=0.28.0",
   "pytest>=8.3.0",

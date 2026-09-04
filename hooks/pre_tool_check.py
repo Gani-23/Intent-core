@@ -94,11 +94,11 @@ def main() -> int:
     tool_name = str(payload.get("tool_name", ""))
     tool_input = payload.get("tool_input") or {}
 
-    # ── Log raw stdin for envelope inspection ─────────────────────────────────
+    # ── Log raw stdin for envelope inspection with redaction ──────────────────
     try:
-        STATE_DIR.mkdir(exist_ok=True)
-        with (STATE_DIR / "raw_stdin.jsonl").open("a") as f:
-            f.write(json.dumps({"hook": "PreToolUse", "payload": payload}) + "\n")
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from lsa.drift.redaction import append_redacted_raw_log
+        append_redacted_raw_log(STATE_DIR, "PreToolUse", payload)
     except Exception:
         pass
 
