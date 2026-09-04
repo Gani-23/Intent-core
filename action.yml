@@ -1,0 +1,38 @@
+name: "Intent Guard PR Auditor"
+description: "Audit agent execution traces and post intent drift reports directly to GitHub Pull Requests"
+author: "Living Systems Auditor Team"
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  github_token:
+    description: "GitHub token (e.g. secrets.GITHUB_TOKEN) for posting PR comments"
+    required: true
+  pr_number:
+    description: "Pull request number (defaults to github.event.pull_request.number)"
+    required: false
+  report_dir:
+    description: "Directory containing generated session report markdown files"
+    required: false
+    default: ".intent-guard/reports"
+  api_url:
+    description: "Optional LSA central API URL for remote organization telemetry"
+    required: false
+  api_key:
+    description: "Optional LSA API Key"
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run Intent Guard PR Commenter
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+        REPORT_DIR: ${{ inputs.report_dir }}
+        LSA_API_URL: ${{ inputs.api_url }}
+        LSA_API_KEY: ${{ inputs.api_key }}
+      run: |
+        python3 "${{ github.action_path }}/action/pr_commenter.py"

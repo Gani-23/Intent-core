@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-ARG LSA_PIP_INSTALL_EXTRAS=""
+ARG LSA_PIP_INSTALL_EXTRAS="api"
 
 WORKDIR /app
 
@@ -12,8 +12,8 @@ RUN useradd --create-home --shell /usr/sbin/nologin lsa
 
 COPY pyproject.toml README.md /app/
 COPY lsa /app/lsa
+COPY hooks /app/hooks
 COPY ebpf /app/ebpf
-COPY frontend /app/frontend
 
 RUN pip install --upgrade pip && \
     if [ -n "$LSA_PIP_INSTALL_EXTRAS" ]; then \
@@ -21,7 +21,7 @@ RUN pip install --upgrade pip && \
     else \
       pip install -e .; \
     fi
-RUN mkdir -p /app/data && chown -R lsa:lsa /app
+RUN mkdir -p /app/data /app/.intent-guard && chown -R lsa:lsa /app
 
 USER lsa
 

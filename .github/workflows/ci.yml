@@ -1,0 +1,49 @@
+name: Intent Guard CI / Quality Gate
+
+on:
+  push:
+    branches: [ main, intent-guard ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-verify:
+    name: Unit Tests & Drift Benchmark Gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+        python-version: [ "3.12" ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[api,dev]"
+
+      - name: Execute Pytest Suite (78+ Unit Tests)
+        run: |
+          pytest tests/unit -v
+
+      - name: Validate Intent Drift Benchmark Suite
+        run: |
+          python benchmarks/benchmark_eval.py
+
+      - name: Generate CycloneDX SBOM & Validate Schema
+        run: |
+          python scripts/generate_sbom.py
+          test -f sbom.json

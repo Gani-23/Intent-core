@@ -115,10 +115,10 @@ def detect_capability() -> BridgeCapability:
 
     if _IS_WINDOWS:
         return BridgeCapability(
-            ObservationMode.FILESYSTEM,
-            True,
-            "windows-kernel32-ctypes",
-            "Windows kernel32 available via ctypes",
+            ObservationMode.UNAVAILABLE,
+            False,
+            "windows-unsupported",
+            "Syscall cross-check unavailable on Windows (ETW kernel tracing not implemented)",
         )
 
     return BridgeCapability(
@@ -300,6 +300,6 @@ def observe_process(pid: int, duration_seconds: float = 2.0) -> tuple[list[Obser
         return observe_pid_linux_proc(pid), ObservationMode.FILESYSTEM
 
     if _IS_WINDOWS:
-        return observe_pid_windows(pid), ObservationMode.FILESYSTEM
+        return [], ObservationMode.UNAVAILABLE
 
     return [], ObservationMode.UNAVAILABLE

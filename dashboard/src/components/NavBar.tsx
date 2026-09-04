@@ -19,11 +19,15 @@ export default function NavBar({ onOpenConfig }: Props) {
           { to: "/proof-bundles", label: "Proof", end: true },
           { to: "/command", label: "Command", end: true },
           { to: "/sessions/events", label: "Events", end: true },
+          { to: "/sessions/replay", label: "Replay", end: true },
+          { to: "/audit/would-it-catch", label: "Simulator", end: true },
           { to: "/command/deployment-debt", label: "Debt", end: true },
           { to: "/command/incidents", label: "Incidents", end: true },
         ]
       : [
           { to: "/sessions/events", label: "Events", end: true },
+          { to: "/sessions/replay", label: "Replay", end: true },
+          { to: "/audit/would-it-catch", label: "Simulator", end: true },
         ]),
     ...(hasPermission("targets") ? [{ to: "/targets", label: "Targets", end: true }] : []),
     ...(hasPermission("reviews") ? [{ to: "/command/reviews", label: "Reviews", end: true }] : []),
