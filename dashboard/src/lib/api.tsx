@@ -39,6 +39,7 @@ import type {
   TargetProfile,
   TrustScoreResponse,
   UpsertTargetProfileRequest,
+  SessionEventRecord,
 } from "./types";
 
 type ApiConfig = {
@@ -53,7 +54,7 @@ const STORAGE_KEY = "lsa-dashboard-config";
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
 const defaultConfig: ApiConfig = {
-  apiKey: "",
+  apiKey: "lsa-test-key-12345",
   actorId: "studio",
   actorRole: "admin",
   actorTeam: "platform",
@@ -153,6 +154,10 @@ export function useBackendApi() {
   return {
     config,
     getHealth: () => fetchJson<HealthResponse>("/health"),
+    getSessionEvents: (sessionId: string) =>
+      fetchJson<SessionEventRecord[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/events`),
+    getRecentSessionEvents: (limit = 20) =>
+      fetchJson<SessionEventRecord[]>(`/api/v1/sessions/recent-events?limit=${limit}`),
     getReadiness: () =>
       fetchJson<ReadinessResponse>("/maintenance/control-plane-deployment-readiness"),
     getAnalytics: (days = 14) => fetchJson<AnalyticsResponse>(`/analytics/control-plane?days=${days}`),

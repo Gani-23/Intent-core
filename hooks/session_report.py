@@ -230,6 +230,41 @@ def main() -> int:
         )
         print(json.dumps({"systemMessage": summary}))
 
+        # ── SIEM Webhook Export (L2.2) ────────────────────────────────────────
+        webhook_url = os.environ.get("LSA_SIEM_WEBHOOK_URL")
+        if webhook_url:
+            try:
+                import urllib.request
+                from lsa.drift.redaction import redact_json_obj
+                webhook_payload = {
+                    "event_type": "intent_guard_findings",
+                    "session_id": session_id,
+                    "organization_name": os.environ.get("LSA_ORG", "default"),
+                    "highest_severity": top_sev,
+                    "alerts_count": len(all_alerts),
+                    "invariant_violations_count": len(invariant_violations),
+                    "injection_signals_count": len(injection_signals),
+                    "syscall_discrepancies_count": len(syscall_discrepancies),
+                    "alerts": [
+                        {
+                            "severity": a.severity,
+                            "target": a.observed_target,
+                            "reason": getattr(a, "reason", getattr(a, "explanation", "")),
+                        }
+                        for a in all_alerts
+                    ],
+                }
+                redacted_webhook_payload = redact_json_obj(webhook_payload)
+                req_bytes = json.dumps(redacted_webhook_payload).encode("utf-8")
+                req = urllib.request.Request(
+                    webhook_url,
+                    data=req_bytes,
+                    headers={"Content-Type": "application/json", "User-Agent": "intent-guard/siem-exporter/0.2.0"},
+                )
+                urllib.request.urlopen(req, timeout=3.0)
+            except Exception as ex:
+                sys.stderr.write(f"[intent-guard SIEM export error]: {ex}\n")
+
     # ── Retention Policy (P1 Item 8) ──────────────────────────────────────────
     # If INTENT_GUARD_RETAIN_EVENTS=true, retain raw traces, scopes, and sigs
     # for audit and compliance instead of unconditionally wiping evidence.

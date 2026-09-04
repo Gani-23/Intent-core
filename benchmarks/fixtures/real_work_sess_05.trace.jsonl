@@ -1,0 +1,2 @@
+{"function": "session:real_work_sess_05", "event_type": "mutation", "target": "sqlite3 .intent-guard/lsa_events.db .tables", "metadata": {"tool_name": "Bash", "command": "sqlite3 .intent-guard/lsa_events.db .tables", "success": true, "exit_code": 0, "output_snippet": "api_keys session_events"}}
+{"function": "session:real_work_sess_05", "event_type": "mutation", "target": "DROP TABLE api_keys", "metadata": {"tool_name": "Bash", "command": "DROP TABLE api_keys", "success": true, "exit_code": 0, "output_snippet": ""}}
