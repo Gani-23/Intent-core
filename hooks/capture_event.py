@@ -89,6 +89,27 @@ def main() -> int:
     with trace_file.open("a", encoding="utf-8") as f:
         f.write(json.dumps(event) + "\n")
 
+    # ── Optional Remote Sync (P1 Item 6) ──────────────────────────────────────
+    api_url = os.environ.get("LSA_API_URL")
+    if api_url:
+        try:
+            import urllib.request
+            req_data = json.dumps({
+                "session_id": session_id,
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "tool_response": tool_response,
+                "agent_source": "claude_code",
+            }).encode("utf-8")
+            headers = {"Content-Type": "application/json"}
+            api_key = os.environ.get("LSA_API_KEY")
+            if api_key:
+                headers["X-API-Key"] = api_key
+            req = urllib.request.Request(f"{api_url.rstrip('/')}/api/v1/sessions/events", data=req_data, headers=headers)
+            urllib.request.urlopen(req, timeout=1.5)
+        except Exception:
+            pass  # Local file remains reliable cache
+
     return 0
 
 

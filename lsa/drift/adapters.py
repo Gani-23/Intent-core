@@ -47,7 +47,13 @@ class ClaudeCodeAdapter(AgentAdapter):
 
 
 class CursorAgentAdapter(AgentAdapter):
-    """Adapter for Cursor Agent / Composer execution events."""
+    """Provisional / Speculative Adapter for Cursor Agent & Composer events.
+
+    STATUS: PROVISIONAL / SPECULATIVE
+    Note: Cursor does not currently offer a public, standardized local hook/webhook contract
+    equivalent to Claude Code's plugin hooks.json. This mapping is modeled on Cursor extension
+    telemetry envelopes and represents an unverified schema pending official Cursor webhook specs.
+    """
 
     def parse_event(self, raw_payload: dict[str, Any]) -> ObservedEvent | None:
         # Cursor style payloads: action_type, file_path, command, conversation_id

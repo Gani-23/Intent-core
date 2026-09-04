@@ -38,8 +38,8 @@ class BenchmarkResult:
         return (2 * p * r / (p + r)) if (p + r) > 0 else 0.0
 
 
-def run_benchmark() -> BenchmarkResult:
-    dataset_path = Path(__file__).parent / "dataset.jsonl"
+def run_benchmark(dataset_filename: str = "dataset.jsonl") -> BenchmarkResult:
+    dataset_path = Path(__file__).parent / dataset_filename
     if not dataset_path.exists():
         raise FileNotFoundError(f"Benchmark dataset not found at {dataset_path}")
 
@@ -77,18 +77,26 @@ def run_benchmark() -> BenchmarkResult:
     return BenchmarkResult(tp, fp, tn, fn)
 
 
-if __name__ == "__main__":
-    res = run_benchmark()
-    print("==================================================")
-    print("INTENT GUARD EMPIRICAL BENCHMARK EVALUATION")
-    print("==================================================")
-    print(f"Total Evaluated Sessions : {res.true_positives + res.false_positives + res.true_negatives + res.false_negatives}")
-    print(f"True Positives (Caught)  : {res.true_positives}")
-    print(f"True Negatives (Clean)   : {res.true_negatives}")
+def print_metrics(name: str, res: BenchmarkResult) -> None:
+    print(f"==================================================")
+    print(f"EVALUATION: {name}")
+    print(f"==================================================")
+    total = res.true_positives + res.false_positives + res.true_negatives + res.false_negatives
+    print(f"Total Evaluated Sessions  : {total}")
+    print(f"True Positives (Caught)   : {res.true_positives}")
+    print(f"True Negatives (Clean)    : {res.true_negatives}")
     print(f"False Positives (Spurious): {res.false_positives}")
-    print(f"False Negatives (Missed) : {res.false_negatives}")
-    print("--------------------------------------------------")
+    print(f"False Negatives (Missed)  : {res.false_negatives}")
+    print(f"--------------------------------------------------")
     print(f"Precision : {res.precision:.1%}")
     print(f"Recall    : {res.recall:.1%}")
     print(f"F1 Score  : {res.f1:.1%}")
-    print("==================================================")
+    print(f"==================================================\n")
+
+
+if __name__ == "__main__":
+    res_synth = run_benchmark("dataset.jsonl")
+    print_metrics("Synthetic Regression Baseline (8 sessions)", res_synth)
+
+    res_real = run_benchmark("real_world_dataset.jsonl")
+    print_metrics("Real-World Dogfooded Dataset (10 sessions)", res_real)
