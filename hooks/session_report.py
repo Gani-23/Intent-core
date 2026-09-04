@@ -140,9 +140,14 @@ def main() -> int:
     # ── Pass 6: Independent OS Syscall Observation & Discrepancy Detection ───
     # Observes open process file descriptors independently of self-reported agent trace.
     syscall_discrepancies: list[str] = []
+    syscall_notice: str | None = None
     try:
-        os_events, _ = observe_process(os.getpid(), duration_seconds=0.2)
-        if os_events:
+        from lsa.drift.models import ObservationMode
+        os_events, obs_mode = observe_process(os.getpid(), duration_seconds=0.2)
+        if obs_mode == ObservationMode.UNAVAILABLE or sys.platform == "win32":
+            syscall_notice = f"Syscall cross-check unavailable on platform '{sys.platform}'. OS process descriptor verification did not run."
+            sys.stderr.write(f"[intent-guard notice] {syscall_notice}\n")
+        elif os_events:
             self_reported_targets = {e.target for e in events}
             # Identify sensitive files touched at OS level but missing from self-reported trace
             for os_ev in os_events:
@@ -204,6 +209,10 @@ def main() -> int:
                     f"- **[CRITICAL]** Process had open handle to `{disc}` at OS level, "
                     f"but this resource was NOT self-reported in tool calls. Potential hook bypass attempt.\n"
                 )
+
+        if syscall_notice:
+            lines.append("## ℹ️ OS Telemetry Notice\n")
+            lines.append(f"> [!WARNING]\n> {syscall_notice}\n\n")
 
         report_dir = STATE_DIR / "reports"
         report_dir.mkdir(parents=True, exist_ok=True)

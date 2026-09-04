@@ -20,6 +20,8 @@ const AdminAccessPage = lazy(() => import("./pages/AdminAccessPage"));
 const AdminWorkspacePage = lazy(() => import("./pages/AdminWorkspacePage"));
 const AdminSecretsPage = lazy(() => import("./pages/AdminSecretsPage"));
 const SessionEventsPage = lazy(() => import("./pages/SessionEventsPage"));
+const IncidentReplayPage = lazy(() => import("./pages/IncidentReplayPage"));
+const WouldItCatchPage = lazy(() => import("./pages/WouldItCatchPage"));
 
 export default function App() {
   useLenisScroll();
@@ -58,6 +60,8 @@ export default function App() {
               }
             />
             <Route path="/sessions/events" element={<SessionEventsPage />} />
+            <Route path="/sessions/replay" element={<IncidentReplayPage />} />
+            <Route path="/audit/would-it-catch" element={<WouldItCatchPage />} />
             <Route
               path="/command/reviews"
               element={

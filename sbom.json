@@ -1,0 +1,96 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:9f2a1b254389ac19cdb6e2047a23e12d6f74",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-09-04T10:47:08.828497+00:00",
+    "tools": [
+      {
+        "vendor": "Living Systems Auditor",
+        "name": "intent-guard-sbom-generator",
+        "version": "1.0.0"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:pypi/living-systems-auditor@0.1.0",
+      "name": "living-systems-auditor",
+      "version": "0.1.0",
+      "description": "Intent-aware drift detection for software systems.",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:pypi/living-systems-auditor@0.1.0"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/fastapi@fastapi>=0.115.0,<0.116.0",
+      "name": "fastapi",
+      "version": "fastapi>=0.115.0,<0.116.0",
+      "scope": "required",
+      "group": "api",
+      "purl": "pkg:pypi/fastapi"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pydantic@pydantic>=2.8.0,<3.0.0",
+      "name": "pydantic",
+      "version": "pydantic>=2.8.0,<3.0.0",
+      "scope": "required",
+      "group": "api",
+      "purl": "pkg:pypi/pydantic"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/uvicorn@uvicorn>=0.30.0,<0.35.0",
+      "name": "uvicorn",
+      "version": "uvicorn>=0.30.0,<0.35.0",
+      "scope": "required",
+      "group": "api",
+      "purl": "pkg:pypi/uvicorn"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pyyaml@pyyaml>=6.0.0,<7.0.0",
+      "name": "pyyaml",
+      "version": "pyyaml>=6.0.0,<7.0.0",
+      "scope": "required",
+      "group": "api",
+      "purl": "pkg:pypi/pyyaml"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/httpx@httpx>=0.28.0,<0.29.0",
+      "name": "httpx",
+      "version": "httpx>=0.28.0,<0.29.0",
+      "scope": "optional",
+      "group": "dev",
+      "purl": "pkg:pypi/httpx"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/pytest@pytest>=8.3.0,<9.1.0",
+      "name": "pytest",
+      "version": "pytest>=8.3.0,<9.1.0",
+      "scope": "optional",
+      "group": "dev",
+      "purl": "pkg:pypi/pytest"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:pypi/psycopg@psycopg[binary]>=3.2.0,<3.3.0",
+      "name": "psycopg",
+      "version": "psycopg[binary]>=3.2.0,<3.3.0",
+      "scope": "optional",
+      "group": "postgres",
+      "purl": "pkg:pypi/psycopg"
+    }
+  ]
+}

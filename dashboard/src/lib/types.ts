@@ -567,3 +567,48 @@ export type SessionEventRecord = {
   payload: Record<string, unknown>;
   created_at: string;
 };
+
+export type ReplayTimelineItem = {
+  id: number;
+  tool_name: string;
+  agent_source: string;
+  target: string;
+  created_at: string;
+  blocked: boolean;
+  policy_violation: boolean;
+  is_drift: boolean;
+  drift_reason?: string | null;
+  payload?: Record<string, unknown> | null;
+};
+
+export type SessionReplayResponse = {
+  session_id: string;
+  organization_name: string;
+  task_text: string;
+  total_actions: number;
+  drift_points_count: number;
+  timeline: ReplayTimelineItem[];
+};
+
+export type EvaluateIncidentRequest = {
+  task_text: string;
+  command: string;
+  tool_name?: string;
+};
+
+export type EvaluateIncidentResponse = {
+  caught: boolean;
+  status: string;
+  severity: string;
+  category: string;
+  reason: string;
+  fingerprint: {
+    authorized_ops?: string[];
+    authorized_paths?: string[];
+    authorized_tables?: string[];
+    prohibitions?: string[];
+    confidence?: number;
+  };
+  invariants_checked: string[];
+};
+

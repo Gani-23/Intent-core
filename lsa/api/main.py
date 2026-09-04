@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from typing import Any
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Header, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from lsa.api.models import (
@@ -12,6 +12,8 @@ from lsa.api.models import (
     IngestSessionEventResponse,
     OrgPolicy,
     PolicyRule,
+    EvaluateIncidentRequest,
+    EvaluateIncidentResponse,
 )
 from lsa.drift.adapters import ClaudeCodeAdapter, CursorAgentAdapter, GenericWebhookAdapter
 from lsa.drift.redaction import redact_json_obj
@@ -52,6 +54,16 @@ def verify_api_key(x_api_key: str | None = Header(None)) -> AuthContext:
         raise HTTPException(status_code=401, detail="Invalid API key")
     if key_info.get("revoked", False):
         raise HTTPException(status_code=401, detail="API key has been revoked")
+
+    from lsa.api.rate_limiter import get_rate_limiter
+    allowed, retry_after = get_rate_limiter().check_rate_limit(x_api_key)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Too many requests.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     return AuthContext(
         key=x_api_key,
         organization_name=key_info["organization_name"],
@@ -381,3 +393,173 @@ def get_analytics(days: int = 14):
 @app.get("/control-plane-alerts")
 def get_alerts(limit: int = 12):
     return []
+
+
+# ── L3.2: Badge Endpoints ─────────────────────────────────────────────────────
+def _generate_badge_svg(label: str, message: str, color_hex: str) -> str:
+    label_len = max(40, len(label) * 7 + 12)
+    msg_len = max(40, len(message) * 7 + 12)
+    total_len = label_len + msg_len
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{total_len}" height="20" role="img" aria-label="{label}: {message}">
+  <linearGradient id="s" x2="0" y2="100%">
+    <stop offset="0" stop-color="#bbb" stop-opacity=".1"/>
+    <stop offset="1" stop-opacity=".1"/>
+  </linearGradient>
+  <clipPath id="r">
+    <rect width="{total_len}" height="20" rx="3" fill="#fff"/>
+  </clipPath>
+  <g clip-path="url(#r)">
+    <rect width="{label_len}" height="20" fill="#24292e"/>
+    <rect x="{label_len}" width="{msg_len}" height="20" fill="{color_hex}"/>
+    <rect width="{total_len}" height="20" fill="url(#s)"/>
+  </g>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="110">
+    <text aria-hidden="true" x="{label_len * 5}" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="{(label_len - 10) * 10}">{label}</text>
+    <text x="{label_len * 5}" y="140" transform="scale(.1)" fill="#fff" textLength="{(label_len - 10) * 10}">{label}</text>
+    <text aria-hidden="true" x="{(label_len + msg_len / 2) * 10}" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="{(msg_len - 10) * 10}">{message}</text>
+    <text x="{(label_len + msg_len / 2) * 10}" y="140" transform="scale(.1)" fill="#fff" textLength="{(msg_len - 10) * 10}">{message}</text>
+  </g>
+</svg>"""
+
+
+@app.get("/api/v1/badge/static.svg")
+def get_static_badge() -> Response:
+    """Static 'protected by intent-guard' badge (zero backend configuration required)."""
+    svg = _generate_badge_svg("intent-guard", "protected", "#2ea44f")
+    return Response(content=svg, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/api/v1/badge/{org}/status.svg")
+def get_org_badge(org: str) -> Response:
+    """Dynamic trust score badge for an organization."""
+    events = _STORE.get_recent_events(limit=100, organization_name=org)
+    session_count = max(1, len({e["session_id"] for e in events}))
+    critical_count = sum(1 for e in events if any(k in (e.get("target") or "") for k in ["DROP", "rm -rf", "TRUNCATE"]))
+    medium_count = sum(1 for e in events if any(k in (e.get("target") or "") for k in ["chmod", "git push"]))
+    score = max(0, round(100 - (critical_count * 25 + medium_count * 5) / (session_count ** 0.5)))
+    
+    if score >= 90:
+        msg = f"drift-free ({score}%)"
+        color = "#2ea44f"
+    elif score >= 70:
+        msg = f"monitored ({score}%)"
+        color = "#dfb317"
+    else:
+        msg = f"drift detected ({score}%)"
+        color = "#e05d44"
+
+    svg = _generate_badge_svg("intent-guard", msg, color)
+    return Response(content=svg, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/v1/badge/{org}/shields.json")
+def get_shields_json(org: str) -> dict[str, Any]:
+    """Shields.io dynamic badge JSON endpoint."""
+    events = _STORE.get_recent_events(limit=100, organization_name=org)
+    session_count = max(1, len({e["session_id"] for e in events}))
+    critical_count = sum(1 for e in events if any(k in (e.get("target") or "") for k in ["DROP", "rm -rf", "TRUNCATE"]))
+    medium_count = sum(1 for e in events if any(k in (e.get("target") or "") for k in ["chmod", "git push"]))
+    score = max(0, round(100 - (critical_count * 25 + medium_count * 5) / (session_count ** 0.5)))
+
+    color = "brightgreen" if score >= 90 else ("yellow" if score >= 70 else "red")
+    return {
+        "schemaVersion": 1,
+        "label": "intent-guard",
+        "message": f"drift-free ({score}%)" if score >= 90 else f"score: {score}%",
+        "color": color,
+    }
+
+
+# ── L3.4: Incident Replay Endpoint ────────────────────────────────────────────
+@app.get("/api/v1/sessions/{session_id}/replay")
+def get_session_replay(session_id: str, auth: AuthContext = Depends(verify_api_key)) -> dict[str, Any]:
+    """Side-by-side incident replay of human intent vs observed agent actions."""
+    from pathlib import Path
+    events = _STORE.get_events_for_session(session_id=session_id, organization_name=auth.organization_name)
+    
+    task_text = ""
+    for sp in [Path(".intent-guard") / f"{session_id}.scope.jsonl", Path(".intent-guard/archive") / f"{session_id}.scope.jsonl"]:
+        if sp.exists():
+            try:
+                for line in sp.read_text(encoding="utf-8").splitlines():
+                    if line.strip():
+                        task_text = json.loads(line).get("prompt", "")
+                        break
+            except Exception:
+                pass
+            if task_text:
+                break
+
+    annotated_timeline = []
+    for e in events:
+        target = e.get("target") or ""
+        is_blocked = bool(e.get("blocked"))
+        is_violation = bool(e.get("policy_violation"))
+        drift_reason = None
+        if is_blocked:
+            drift_reason = "Blocked before execution by pre-tool policy check"
+        elif any(k in target for k in ["DROP", "rm -rf", "TRUNCATE"]):
+            drift_reason = "Destructive mutation detected out of approved scope"
+        elif "chmod 777" in target:
+            drift_reason = "Permissive privilege change detected"
+        elif is_violation:
+            drift_reason = "Organization policy violation"
+
+        annotated_timeline.append({
+            "id": e.get("id"),
+            "tool_name": e.get("tool_name"),
+            "agent_source": e.get("agent_source"),
+            "target": target,
+            "created_at": e.get("created_at"),
+            "blocked": is_blocked,
+            "policy_violation": is_violation,
+            "is_drift": bool(drift_reason),
+            "drift_reason": drift_reason,
+            "payload": e.get("payload"),
+        })
+
+    return {
+        "session_id": session_id,
+        "organization_name": auth.organization_name,
+        "task_text": task_text or f"Agent Execution Session ({session_id})",
+        "total_actions": len(annotated_timeline),
+        "drift_points_count": sum(1 for e in annotated_timeline if e["is_drift"]),
+        "timeline": annotated_timeline,
+    }
+
+
+# ── L3.5: 'Would This Have Caught It' Endpoint ───────────────────────────────
+@app.post("/api/v1/audit/evaluate-incident", response_model=EvaluateIncidentResponse)
+def evaluate_incident(req: EvaluateIncidentRequest) -> EvaluateIncidentResponse:
+    """Evaluate an arbitrary task/action pair against intent-guard drift rules."""
+    from lsa.drift.models import ObservedEvent
+    from lsa.drift.mutation_rules import MutationComparator, SessionScope
+    from lsa.drift.intent_fingerprint import extract_fingerprint
+
+    scope = SessionScope(task_text=req.task_text)
+    event = ObservedEvent(
+        function="audit:interactive",
+        event_type="mutation",
+        target=req.command,
+        metadata={"tool_name": req.tool_name, "command": req.command},
+    )
+    comparator = MutationComparator()
+    alerts = comparator.compare(scope, [event])
+    fp = extract_fingerprint(req.task_text)
+
+    caught = len(alerts) > 0
+    top_alert = alerts[0] if alerts else None
+
+    return EvaluateIncidentResponse(
+        caught=caught,
+        status="FLAGGED_AS_DRIFT" if caught else "PERMITTED_IN_SCOPE",
+        severity=top_alert.severity.upper() if top_alert else "LOW",
+        category=top_alert.observed_target if top_alert else "normal_execution",
+        reason=getattr(top_alert, "reason", getattr(top_alert, "explanation", "Action aligned with stated intent.")) if top_alert else "Action matches expected intent.",
+        fingerprint=fp.to_dict(),
+        invariants_checked=[
+            "Destructive filesystem and database mutation rules",
+            "Sensitive credential store touch detection",
+            "Read-only negative constraint enforcement",
+        ],
+    )

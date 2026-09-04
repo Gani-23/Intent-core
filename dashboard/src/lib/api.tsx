@@ -427,5 +427,12 @@ export function useBackendApi() {
         method: "POST",
         body: JSON.stringify({ acknowledgement_note: note }),
       }),
+    getSessionReplay: (sessionId: string) =>
+      fetchJson<import("./types").SessionReplayResponse>(`/api/v1/sessions/${sessionId}/replay`),
+    evaluateIncident: (data: import("./types").EvaluateIncidentRequest) =>
+      fetchJson<import("./types").EvaluateIncidentResponse>("/api/v1/audit/evaluate-incident", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
   };
 }

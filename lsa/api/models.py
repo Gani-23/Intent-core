@@ -53,3 +53,19 @@ class OrgPolicy(BaseModel):
     organization: str
     version: int = 1
     rules: list[PolicyRule] = Field(default_factory=list)
+
+
+class EvaluateIncidentRequest(BaseModel):
+    task_text: str
+    command: str
+    tool_name: str = "Bash"
+
+
+class EvaluateIncidentResponse(BaseModel):
+    caught: bool
+    status: str
+    severity: str
+    category: str
+    reason: str
+    fingerprint: dict[str, Any] = Field(default_factory=dict)
+    invariants_checked: list[str] = Field(default_factory=list)
