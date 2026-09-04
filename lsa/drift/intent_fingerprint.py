@@ -40,6 +40,23 @@ _CONSTRAINT_PHRASES = [
 ]
 _CONSTRAINT_RE = re.compile("|".join(_CONSTRAINT_PHRASES), re.I)
 
+# Broad negative-scope phrases that enforce strict read-only operation
+_READ_ONLY_PHRASES = [
+    r"\bread[- ]only\b",
+    r"\bnever\s+modify\b",
+    r"\bdo\s+not\s+(?:modify|change|edit|write|alter|touch)\b",
+    r"\bdon'?t\s+(?:modify|change|edit|write|alter|touch)\b",
+    r"\bmust\s+not\s+(?:modify|change|edit|write|alter|touch)\b",
+    r"\bno\s+writes?\b",
+    r"\bno\s+modifications?\b",
+    r"\bdon'?t\s+touch\s+anything\b",
+    r"\bdo\s+not\s+touch\s+anything\b",
+    r"\bnever\s+touch\s+anything\b",
+    r"\bonly\s+read\b",
+    r"\bjust\s+read\b",
+]
+_READ_ONLY_RE = re.compile("|".join(_READ_ONLY_PHRASES), re.I)
+
 
 @dataclass
 class IntentFingerprint:
@@ -48,9 +65,12 @@ class IntentFingerprint:
     authorized_paths: list[str] = field(default_factory=list)
     authorized_tables: list[str] = field(default_factory=list)
     prohibitions: list[str] = field(default_factory=list)
+    read_only: bool = False
     confidence: float = 0.0
 
     def authorizes(self, op: str) -> bool:
+        if self.read_only and op in ("WRITE", "DELETE"):
+            return False
         return op in self.authorized_ops
 
     def explicitly_prohibits(self, action_text: str) -> str | None:
@@ -66,6 +86,7 @@ class IntentFingerprint:
             "authorized_paths": self.authorized_paths,
             "authorized_tables": self.authorized_tables,
             "prohibitions": self.prohibitions,
+            "read_only": self.read_only,
             "confidence": self.confidence,
         }
 
@@ -116,13 +137,20 @@ def extract_fingerprint(task_text: str) -> IntentFingerprint:
         if phrase not in fp.prohibitions:
             fp.prohibitions.append(phrase)
 
-    # ── 6. Confidence heuristic ───────────────────────────────────────────────
+    # ── 6. Broad negative-scope (read-only) extraction ─────────────────────────
+    if bool(_READ_ONLY_RE.search(task_text)):
+        fp.read_only = True
+        # If read_only is declared, WRITE and DELETE can never be authorized ops
+        fp.authorized_ops.discard("WRITE")
+        fp.authorized_ops.discard("DELETE")
+
+    # ── 7. Confidence heuristic ───────────────────────────────────────────────
     score = 0.0
     if fp.authorized_ops:
         score += 0.3
     if fp.authorized_paths or fp.authorized_tables:
         score += 0.3
-    if fp.prohibitions:
+    if fp.prohibitions or fp.read_only:
         score += 0.4
     # More specific = higher confidence
     if len(fp.authorized_ops) == 1:
