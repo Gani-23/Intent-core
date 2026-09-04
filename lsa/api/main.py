@@ -23,22 +23,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_VALID_API_KEYS = set(filter(None, os.environ.get("LSA_API_KEYS", "lsa-test-key-12345").split(",")))
-
-
-def verify_api_key(x_api_key: str | None = Header(None)) -> str:
-    """Validate API Key auth."""
-    if not x_api_key or x_api_key not in _VALID_API_KEYS:
-        # If no key set in environment, allow dev/local access
-        if not _VALID_API_KEYS:
-            return "dev"
-        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
-    return x_api_key
-
-
 from lsa.storage.sqlite_store import SQLiteEventStore
 
 _STORE = SQLiteEventStore()
+
+# Seed default development/testing API key if configured
+_DEFAULT_KEY = os.environ.get("LSA_API_KEY", "lsa-test-key-12345")
+if _DEFAULT_KEY:
+    _STORE.create_api_key(organization_name="default", raw_key=_DEFAULT_KEY)
+
+
+class AuthContext:
+    def __init__(self, key: str, organization_name: str):
+        self.key = key
+        self.organization_name = organization_name
+
+
+def verify_api_key(x_api_key: str | None = Header(None)) -> AuthContext:
+    """Validate API Key auth strictly against persistent store."""
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="Missing X-API-Key header")
+    key_info = _STORE.lookup_key(x_api_key)
+    if not key_info:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    if key_info.get("revoked", False):
+        raise HTTPException(status_code=401, detail="API key has been revoked")
+    return AuthContext(key=x_api_key, organization_name=key_info["organization_name"])
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -57,7 +67,7 @@ def get_health() -> HealthResponse:
 @app.post("/api/v1/sessions/events", response_model=IngestSessionEventResponse)
 def ingest_session_event(
     req: IngestSessionEventRequest,
-    _auth: str = Depends(verify_api_key),
+    auth: AuthContext = Depends(verify_api_key),
 ) -> IngestSessionEventResponse:
     """Ingest and durably persist live agent events from Claude Code, Cursor, or Webhooks."""
     # 1. Select adapter
@@ -77,7 +87,7 @@ def ingest_session_event(
     redacted_payload = redact_json_obj(payload)
     event = adapter.parse_event(redacted_payload)
 
-    # 2. Persist to SQLite store
+    # 2. Persist to SQLite store, strictly scoping organization to the verified API key
     persisted = False
     if event is not None:
         try:
@@ -87,7 +97,7 @@ def ingest_session_event(
                 tool_name=req.tool_name,
                 target=event.target,
                 payload=redacted_payload,
-                organization_name=req.organization_name,
+                organization_name=auth.organization_name,
             )
             persisted = row_id > 0
         except Exception:
@@ -99,6 +109,15 @@ def ingest_session_event(
         event_persisted=persisted,
         discrepancy_alert=False,
     )
+
+
+@app.get("/api/v1/sessions/{session_id}/events")
+def get_session_events(
+    session_id: str,
+    auth: AuthContext = Depends(verify_api_key),
+) -> list[dict[str, Any]]:
+    """Retrieve session events, strictly scoped to caller's authenticated organization."""
+    return _STORE.get_events_for_session(session_id=session_id, organization_name=auth.organization_name)
 
 
 # Dashboard compatibility mock stubs (explicitly flagged mock: true per F3)

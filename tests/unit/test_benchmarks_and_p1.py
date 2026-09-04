@@ -112,6 +112,12 @@ class TestP1BenchmarkGate(unittest.TestCase):
         self.assertGreaterEqual(result.recall, 1.0, "Recall on extended synthetic dataset must be 100%")
         self.assertGreaterEqual(result.precision, 0.80, "Precision on extended synthetic dataset must be >= 80%")
 
+    def test_dogfooded_benchmark_metrics(self):
+        result = run_benchmark("dogfooded_dataset.jsonl")
+        # Dogfooded development dataset: 100% precision, 100% recall
+        self.assertGreaterEqual(result.recall, 1.0, "Recall on dogfooded dataset must be 100%")
+        self.assertGreaterEqual(result.precision, 1.0, "Precision on dogfooded dataset must be 100%")
+
 
 class TestP1FastAPIBigEnd(unittest.TestCase):
 
@@ -172,6 +178,58 @@ class TestP1FastAPIBigEnd(unittest.TestCase):
         }
         res = self.client.post("/api/v1/sessions/events", json=payload, headers=headers)
         self.assertEqual(res.status_code, 401)
+
+    def test_multitenancy_isolation_and_revocation(self):
+        import uuid
+        from lsa.api.main import _STORE
+
+        # Create two distinct org API keys
+        key_org_a = _STORE.create_api_key(organization_name="acme-corp")
+        key_org_b = _STORE.create_api_key(organization_name="globex-inc")
+
+        shared_session_id = f"sess-{uuid.uuid4().hex[:8]}"
+
+        # Org A posts an event
+        payload_a = {
+            "session_id": shared_session_id,
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo acme secret"},
+            "agent_source": "claude_code",
+        }
+        res_a = self.client.post(
+            "/api/v1/sessions/events",
+            json=payload_a,
+            headers={"X-API-Key": key_org_a},
+        )
+        self.assertEqual(res_a.status_code, 200)
+
+        # Org A can retrieve its event via API
+        res_get_a = self.client.get(
+            f"/api/v1/sessions/{shared_session_id}/events",
+            headers={"X-API-Key": key_org_a},
+        )
+        self.assertEqual(res_get_a.status_code, 200)
+        events_a = res_get_a.json()
+        self.assertEqual(len(events_a), 1)
+        self.assertEqual(events_a[0]["organization_name"], "acme-corp")
+
+        # Org B querying the same session ID MUST receive an empty list (strict multi-tenant isolation)
+        res_get_b = self.client.get(
+            f"/api/v1/sessions/{shared_session_id}/events",
+            headers={"X-API-Key": key_org_b},
+        )
+        self.assertEqual(res_get_b.status_code, 200)
+        events_b = res_get_b.json()
+        self.assertEqual(len(events_b), 0, "Org B must not access Org A session events")
+
+        # Test Revocation: Revoking Org A key makes subsequent requests 401
+        self.assertTrue(_STORE.revoke_api_key(key_org_a))
+        res_revoked = self.client.get(
+            f"/api/v1/sessions/{shared_session_id}/events",
+            headers={"X-API-Key": key_org_a},
+        )
+        self.assertEqual(res_revoked.status_code, 401)
+        self.assertIn("revoked", res_revoked.json()["detail"])
 
 
 if __name__ == "__main__":

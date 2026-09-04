@@ -100,3 +100,6 @@ if __name__ == "__main__":
 
     res_ext = run_benchmark("synthetic_dataset_v2.jsonl")
     print_metrics("Extended Synthetic Regression Set (10 sessions)", res_ext)
+
+    res_dogfood = run_benchmark("dogfooded_dataset.jsonl")
+    print_metrics("Real Dogfooded Development Dataset (6 sessions)", res_dogfood)
