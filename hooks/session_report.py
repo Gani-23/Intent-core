@@ -192,11 +192,17 @@ def main() -> int:
                 lines.append(f"- **[{p.severity.upper()}] {p.pattern}**: {p.description}\n")
 
         if syscall_discrepancies:
-            lines.append("## 🛡️ Telemetry Discrepancy (Un-reported OS Activity Detected)\n")
+            lines.append("## 🛡️ Telemetry Discrepancy (OS Process Spot-Check Alert)\n")
+            lines.append(
+                "> [!NOTE]\n"
+                "> Observation Window Note: This pass evaluates an OS-level open file descriptor spot-check "
+                "at session Stop time. Discrepancies indicate resources accessed by the agent process "
+                "that were omitted from self-reported tool calls.\n\n"
+            )
             for disc in syscall_discrepancies:
                 lines.append(
-                    f"- **[CRITICAL]** Process accessed `{disc}` at OS level, "
-                    f"but this action was NOT self-reported in tool calls. Potential hook bypass attempt.\n"
+                    f"- **[CRITICAL]** Process had open handle to `{disc}` at OS level, "
+                    f"but this resource was NOT self-reported in tool calls. Potential hook bypass attempt.\n"
                 )
 
         report_dir = STATE_DIR / "reports"

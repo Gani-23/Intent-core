@@ -72,6 +72,20 @@ Pass 2 features a robust **multi-provider failsafe cascade**:
   second signal (catches an agent quietly calling an undeclared host) for a
   later "deep verification" tier — not required for the MVP.
 
+## Setup
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # optional — falls back to multi-provider cascade
+                                        # (OpenAI, Gemini, Antigravity, or deterministic)
+python3 examples/demo_pocketos_scenario.py   # run this first
+```
+
+To install as a Claude Code plugin, point `CLAUDE_PLUGIN_ROOT` at this directory and register `hooks/hooks.json` per Claude Code plugin documentation.
+
+> [!WARNING]
+> **Runtime Verification Status**:
+> The hook scripts (`capture_scope.py`, `pre_tool_check.py`, `capture_event.py`, `session_report.py`) have been rigorously tested and verified end-to-end using simulated stdin JSON payloads matching Claude Code's binary schema. However, integration inside an active, interactive Claude Code live session remains unverified pending an authenticated test account in this environment.
+
 ## Deployment & Enforcement Policies (Fail-Open vs. Fail-Closed)
 
 `intent-guard` supports two execution postures:
