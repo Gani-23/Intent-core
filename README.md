@@ -72,19 +72,18 @@ Pass 2 features a robust **multi-provider failsafe cascade**:
   second signal (catches an agent quietly calling an undeclared host) for a
   later "deep verification" tier — not required for the MVP.
 
-## Setup
+## Deployment & Enforcement Policies (Fail-Open vs. Fail-Closed)
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # optional — falls back to a
-                                        # deterministic rule-based report
-                                        # if unset, never crashes silently
-python3 examples/demo_pocketos_scenario.py   # run this first
-```
+`intent-guard` supports two execution postures:
 
-To actually install as a Claude Code plugin, point `CLAUDE_PLUGIN_ROOT` at
-this directory and register `hooks/hooks.json` per the plugin docs — this
-part is untested against the real Claude Code runtime and is the next thing
-to verify.
+1. **Individual Developer Mode (Default: Fail-Open)**:
+   - `INTENT_GUARD_MODE=observe` (default): Emits telemetry and writes reports at session end without blocking agent turn flow.
+   - If an internal error occurs (e.g. malformed JSON, unreadable state file), `intent-guard` safely fails open to avoid disrupting developer productivity.
+
+2. **Enterprise Strict Mode (Fail-Closed Option)**:
+   - `INTENT_GUARD_MODE=strict`: Enables `PreToolUse` blocking for high-risk destructive actions (`rm -rf /`, `DROP TABLE`, force pushes, etc.) and enforces scope manifest integrity.
+   - `INTENT_GUARD_FAIL_CLOSED=true`: Configures the pre-tool gate to **fail closed**. If scope signatures are missing, keys cannot be read, or verification errors occur, the tool execution is halted. This is recommended for regulated enterprise and CI environments.
+   - `INTENT_GUARD_RETAIN_EVENTS=true`: Retains raw session traces, scopes, and verification signatures in `.intent-guard/archive/` instead of deleting them at session end, meeting SOC2/compliance audit trail requirements.
 
 ## License
 

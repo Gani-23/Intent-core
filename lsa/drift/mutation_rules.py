@@ -11,7 +11,7 @@ from lsa.drift.models import DriftAlert, ObservedEvent
 DESTRUCTIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("filesystem-wide delete", re.compile(r"\brm\s+-[a-z]*r[a-z]*f\b|\brm\s+-[a-z]*f[a-z]*r\b", re.I)),
     ("force push", re.compile(r"\bgit\s+push\b.*(--force|-f)\b", re.I)),
-    ("sql destructive", re.compile(r"\b(drop\s+table|drop\s+database|truncate\s+table|delete\s+from\s+\S+\s*;?\s*$)", re.I)),
+    ("sql destructive", re.compile(r"\b(drop\s+table|drop\s+database|truncate\s+table|delete\s+from\s+\S+)", re.I)),
     ("migration reset", re.compile(r"\bmigrate\s+(diff|reset)\b.*shadow", re.I)),
     ("permissive chmod", re.compile(r"\bchmod\s+(-R\s+)?777\b", re.I)),
 ]

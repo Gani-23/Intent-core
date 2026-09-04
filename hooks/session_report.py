@@ -27,6 +27,7 @@ from lsa.drift.intent_fingerprint import extract_fingerprint
 from lsa.drift.invariant_checker import check_invariants, load_invariants
 from lsa.drift.injection_detector import detect_injection
 from lsa.drift.session_ledger import append_to_ledger, load_ledger, analyze_ledger
+from lsa.drift.syscall_bridge import observe_process
 from lsa.remediation.llm_client import build_remediation_client
 
 STATE_DIR = Path(".intent-guard")
@@ -85,9 +86,11 @@ def main() -> int:
     trace_path = STATE_DIR / f"{session_id}.trace.jsonl"
     scope_path = STATE_DIR / f"{session_id}.scope.jsonl"
 
-    STATE_DIR.mkdir(exist_ok=True)
-    with (STATE_DIR / "raw_stdin.jsonl").open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"hook": "Stop", "payload": payload}) + "\n")
+    try:
+        from lsa.drift.redaction import append_redacted_raw_log
+        append_redacted_raw_log(STATE_DIR, "Stop", payload)
+    except Exception:
+        pass
 
     events = load_events(trace_path)
     task_text = load_scope_text(scope_path)
@@ -134,8 +137,24 @@ def main() -> int:
     ledger_entries = load_ledger()
     ledger_patterns = analyze_ledger(ledger_entries)
 
+    # ── Pass 6: Independent OS Syscall Observation & Discrepancy Detection ───
+    # Observes open process file descriptors independently of self-reported agent trace.
+    syscall_discrepancies: list[str] = []
+    try:
+        os_events, _ = observe_process(os.getpid(), duration_seconds=0.2)
+        if os_events:
+            self_reported_targets = {e.target for e in events}
+            # Identify sensitive files touched at OS level but missing from self-reported trace
+            for os_ev in os_events:
+                t = os_ev.target
+                if any(k in t.lower() for k in (".env", "id_rsa", "credentials", "secrets", "passwd")):
+                    if t not in self_reported_targets and not any(r in t for r in self_reported_targets):
+                        syscall_discrepancies.append(t)
+    except Exception:
+        pass
+
     # ── Build report ──────────────────────────────────────────────────────────
-    has_findings = any([all_alerts, invariant_violations, injection_signals, ledger_patterns])
+    has_findings = any([all_alerts, invariant_violations, injection_signals, ledger_patterns, syscall_discrepancies])
     if has_findings:
         client = build_remediation_client(_Settings())
         placeholder = FunctionIntent(
@@ -172,12 +191,23 @@ def main() -> int:
             for p in ledger_patterns:
                 lines.append(f"- **[{p.severity.upper()}] {p.pattern}**: {p.description}\n")
 
+        if syscall_discrepancies:
+            lines.append("## 🛡️ Telemetry Discrepancy (Un-reported OS Activity Detected)\n")
+            for disc in syscall_discrepancies:
+                lines.append(
+                    f"- **[CRITICAL]** Process accessed `{disc}` at OS level, "
+                    f"but this action was NOT self-reported in tool calls. Potential hook bypass attempt.\n"
+                )
+
         report_dir = STATE_DIR / "reports"
         report_dir.mkdir(parents=True, exist_ok=True)
         report_path = report_dir / f"{session_id}.md"
         report_path.write_text("\n".join(lines), encoding="utf-8")
 
-        top_sev = all_alerts[0].severity if all_alerts else ("critical" if invariant_violations else "high")
+        top_sev = (
+            "critical" if (syscall_discrepancies or any(a.severity == "critical" for a in all_alerts) or invariant_violations)
+            else (all_alerts[0].severity if all_alerts else "high")
+        )
         extras = []
         if invariant_violations:
             extras.append(f"{len(invariant_violations)} invariant violation(s)")
@@ -185,6 +215,8 @@ def main() -> int:
             extras.append(f"{len(injection_signals)} injection signal(s)")
         if ledger_patterns:
             extras.append(f"{len(ledger_patterns)} cross-session pattern(s)")
+        if syscall_discrepancies:
+            extras.append(f"{len(syscall_discrepancies)} OS telemetry discrepancy alert(s)")
         extra_str = (", " + ", ".join(extras)) if extras else ""
         summary = (
             f"intent-guard flagged {len(all_alerts)} action(s){extra_str} this session "
@@ -192,9 +224,25 @@ def main() -> int:
         )
         print(json.dumps({"systemMessage": summary}))
 
-    trace_path.unlink(missing_ok=True)
-    scope_path.unlink(missing_ok=True)
-    (STATE_DIR / f"{session_id}.sig").unlink(missing_ok=True)
+    # ── Retention Policy (P1 Item 8) ──────────────────────────────────────────
+    # If INTENT_GUARD_RETAIN_EVENTS=true, retain raw traces, scopes, and sigs
+    # for audit and compliance instead of unconditionally wiping evidence.
+    retain_evidence = os.environ.get("INTENT_GUARD_RETAIN_EVENTS", "false").lower() in ("true", "1", "yes")
+    if retain_evidence:
+        archive_dir = STATE_DIR / "archive"
+        archive_dir.mkdir(exist_ok=True)
+        if trace_path.exists():
+            trace_path.rename(archive_dir / f"{session_id}.trace.jsonl")
+        if scope_path.exists():
+            scope_path.rename(archive_dir / f"{session_id}.scope.jsonl")
+        sig_file = STATE_DIR / f"{session_id}.sig"
+        if sig_file.exists():
+            sig_file.rename(archive_dir / f"{session_id}.sig")
+    else:
+        trace_path.unlink(missing_ok=True)
+        scope_path.unlink(missing_ok=True)
+        (STATE_DIR / f"{session_id}.sig").unlink(missing_ok=True)
+
     (STATE_DIR / f"{session_id}.invariants.json").unlink(missing_ok=True)
     (STATE_DIR / f"{session_id}.pretool.jsonl").unlink(missing_ok=True)
     return 0
