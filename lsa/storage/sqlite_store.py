@@ -6,7 +6,9 @@ Zero external dependencies (stdlib sqlite3).
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import secrets
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,11 @@ class SQLiteEventStore:
         conn.row_factory = sqlite3.Row
         return conn
 
+    @staticmethod
+    def hash_key(raw_key: str) -> str:
+        """Secure SHA-256 hash of API key for storage."""
+        return hashlib.sha256(raw_key.strip().encode("utf-8")).hexdigest()
+
     def _init_db(self) -> None:
         with self._get_connection() as conn:
             conn.execute("""
@@ -38,7 +45,66 @@ class SQLiteEventStore:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_events_session ON session_events(session_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_events_org_session ON session_events(organization_name, session_id)")
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS api_keys (
+                    key_hash TEXT PRIMARY KEY,
+                    organization_name TEXT NOT NULL,
+                    key_prefix TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    revoked INTEGER DEFAULT 0
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_org ON api_keys(organization_name)")
             conn.commit()
+
+    def create_api_key(self, organization_name: str, raw_key: str | None = None) -> str:
+        """Create and store a hashed API key for an organization. Returns the raw API key."""
+        if not raw_key:
+            raw_key = f"lsa_{secrets.token_urlsafe(24)}"
+        khash = self.hash_key(raw_key)
+        prefix = raw_key[:8] if len(raw_key) >= 8 else raw_key
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO api_keys (key_hash, organization_name, key_prefix, revoked)
+                VALUES (?, ?, ?, 0)
+                ON CONFLICT(key_hash) DO UPDATE SET organization_name = excluded.organization_name, revoked = 0
+                """,
+                (khash, organization_name, prefix),
+            )
+            conn.commit()
+        return raw_key
+
+    def revoke_api_key(self, raw_key: str) -> bool:
+        """Mark an API key as revoked."""
+        khash = self.hash_key(raw_key)
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE api_keys SET revoked = 1 WHERE key_hash = ?", (khash,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    def lookup_key(self, raw_key: str) -> dict[str, Any] | None:
+        """Look up API key metadata by raw key. Returns None if invalid or revoked."""
+        if not raw_key:
+            return None
+        khash = self.hash_key(raw_key)
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT organization_name, created_at, revoked FROM api_keys WHERE key_hash = ?",
+                (khash,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "organization_name": row["organization_name"],
+                "created_at": row["created_at"],
+                "revoked": bool(row["revoked"]),
+            }
 
     def store_event(
         self,
@@ -49,7 +115,7 @@ class SQLiteEventStore:
         payload: dict[str, Any],
         organization_name: str = "default",
     ) -> int:
-        """Persist event to database. Returns inserted row ID."""
+        """Persist event to database scoped strictly to an organization. Returns inserted row ID."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -62,16 +128,25 @@ class SQLiteEventStore:
             conn.commit()
             return cursor.lastrowid or 0
 
-    def get_events_for_session(self, session_id: str) -> list[dict[str, Any]]:
-        """Retrieve persisted events for a session."""
+    def get_events_for_session(
+        self, session_id: str, organization_name: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Retrieve persisted events for a session, optionally scoped to an organization."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM session_events WHERE session_id = ? ORDER BY id ASC", (session_id,))
+            if organization_name:
+                cursor.execute(
+                    "SELECT * FROM session_events WHERE session_id = ? AND organization_name = ? ORDER BY id ASC",
+                    (session_id, organization_name),
+                )
+            else:
+                cursor.execute("SELECT * FROM session_events WHERE session_id = ? ORDER BY id ASC", (session_id,))
             rows = cursor.fetchall()
             return [
                 {
                     "id": row["id"],
                     "session_id": row["session_id"],
+                    "organization_name": row["organization_name"],
                     "agent_source": row["agent_source"],
                     "tool_name": row["tool_name"],
                     "target": row["target"],
