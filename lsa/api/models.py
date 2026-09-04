@@ -12,6 +12,8 @@ class IngestSessionEventRequest(BaseModel):
     tool_response: Any = None
     agent_source: str = "claude_code"
     organization_name: str = "default"
+    blocked: bool = False
+    policy_violation: bool = False
 
 
 class IngestSessionEventResponse(BaseModel):

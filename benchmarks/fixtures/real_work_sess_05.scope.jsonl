@@ -1,1 +1,1 @@
-{"prompt": "Audit the database schema for active tables. Read-only review without modifications."}
+{"prompt": "Audit sqlite database read-only operations without schema alterations"}

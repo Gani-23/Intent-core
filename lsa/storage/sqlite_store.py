@@ -41,11 +41,23 @@ class SQLiteEventStore:
                     tool_name TEXT NOT NULL,
                     target TEXT,
                     payload_json TEXT NOT NULL,
+                    blocked INTEGER DEFAULT 0,
+                    policy_violation INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_events_session ON session_events(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_events_org_session ON session_events(organization_name, session_id)")
+
+            # Ensure columns exist if upgrading table
+            try:
+                conn.execute("ALTER TABLE session_events ADD COLUMN blocked INTEGER DEFAULT 0")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE session_events ADD COLUMN policy_violation INTEGER DEFAULT 0")
+            except Exception:
+                pass
 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS api_keys (
@@ -165,16 +177,27 @@ class SQLiteEventStore:
         target: str | None,
         payload: dict[str, Any],
         organization_name: str = "default",
+        blocked: bool = False,
+        policy_violation: bool = False,
     ) -> int:
         """Persist event to database scoped strictly to an organization. Returns inserted row ID."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO session_events (session_id, organization_name, agent_source, tool_name, target, payload_json)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO session_events (session_id, organization_name, agent_source, tool_name, target, payload_json, blocked, policy_violation)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (session_id, organization_name, agent_source, tool_name, target or "", json.dumps(payload)),
+                (
+                    session_id,
+                    organization_name,
+                    agent_source,
+                    tool_name,
+                    target or "",
+                    json.dumps(payload),
+                    1 if blocked else 0,
+                    1 if policy_violation else 0,
+                ),
             )
             conn.commit()
             return cursor.lastrowid or 0
@@ -202,6 +225,8 @@ class SQLiteEventStore:
                     "tool_name": row["tool_name"],
                     "target": row["target"],
                     "payload": json.loads(row["payload_json"]),
+                    "blocked": bool(row["blocked"]) if "blocked" in row.keys() else False,
+                    "policy_violation": bool(row["policy_violation"]) if "policy_violation" in row.keys() else False,
                     "created_at": row["created_at"],
                 }
                 for row in rows
@@ -230,6 +255,8 @@ class SQLiteEventStore:
                     "tool_name": row["tool_name"],
                     "target": row["target"],
                     "payload": json.loads(row["payload_json"]),
+                    "blocked": bool(row["blocked"]) if "blocked" in row.keys() else False,
+                    "policy_violation": bool(row["policy_violation"]) if "policy_violation" in row.keys() else False,
                     "created_at": row["created_at"],
                 }
                 for row in rows

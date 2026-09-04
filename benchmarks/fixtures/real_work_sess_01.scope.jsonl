@@ -1,1 +1,1 @@
-{"prompt": "Inspect project configuration in pyproject.toml and run pytest on ast parser."}
+{"prompt": "Verify test suite health across the repository"}

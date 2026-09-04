@@ -303,20 +303,68 @@ class TestP1FastAPIBigEnd(unittest.TestCase):
         self.assertEqual(pol["rules"][0]["id"], "no-prod-table-writes")
 
     def test_layer2_compliance_report_and_gaps(self):
-        """L2.3: Test SOC2 CC7.2 compliance evidence report and honest gap identification."""
+        """L2.3 / C1 / C2: Test SOC2 CC7.2 compliance evidence report, signature verification (C1), and blocked violations (C2)."""
         from lsa.api.main import _STORE
+        from pathlib import Path
+        import json
 
         org_key = _STORE.create_api_key(organization_name="compliance-org")
-        res = self.client.get(
+        
+        # Scenario 1: Session with missing/corrupted signature
+        tampered_sess = "tampered_audit_sess_99"
+        _STORE.store_event(
+            session_id=tampered_sess,
+            agent_source="claude_code",
+            tool_name="Bash",
+            target="git status",
+            payload={"test": "val"},
+            organization_name="compliance-org",
+        )
+        # Create corrupted sig file
+        state_dir = Path(".intent-guard")
+        state_dir.mkdir(exist_ok=True)
+        (state_dir / f"{tampered_sess}.scope.jsonl").write_text(json.dumps({"prompt": "Do audit"}) + "\n")
+        (state_dir / f"{tampered_sess}.sig").write_text(json.dumps({"sig": "corrupted_bad_sig", "session_id": tampered_sess}))
+
+        res_tampered = self.client.get(
             "/api/v1/orgs/compliance-org/compliance-report",
             headers={"X-API-Key": org_key},
         )
-        self.assertEqual(res.status_code, 200)
-        data = res.json()
-        self.assertEqual(data["report_type"], "SOC2_Type_II_CC7_2_Agent_Execution_Evidence")
-        self.assertIn("CC7.2_change_management", data["controls"])
-        self.assertIn("evidence_integrity", data["controls"])
-        self.assertIn("evidence_gaps_identified", data["controls"]["evidence_integrity"])
+        self.assertEqual(res_tampered.status_code, 200)
+        data_t = res_tampered.json()
+        self.assertFalse(data_t["controls"]["evidence_integrity"]["tamper_evident_signatures_verified"])
+        self.assertIn(tampered_sess, data_t["controls"]["evidence_integrity"]["per_session_signature_verification"])
+        self.assertFalse(data_t["controls"]["evidence_integrity"]["per_session_signature_verification"][tampered_sess]["verified"])
+
+        # Scenario 2: Blocked policy violation ingested (C2)
+        blocked_sess = "blocked_violation_sess_42"
+        self.client.post(
+            "/api/v1/sessions/events",
+            json={
+                "session_id": blocked_sess,
+                "tool_name": "Bash",
+                "tool_input": {"command": "DELETE FROM prod_users"},
+                "tool_response": {"continue": False, "reason": "[intent-guard policy] Blocked by organization policy rule 'block-prod'"},
+                "blocked": True,
+                "policy_violation": True,
+                "agent_source": "claude_code",
+            },
+            headers={"X-API-Key": org_key},
+        )
+
+        res_blocked = self.client.get(
+            "/api/v1/orgs/compliance-org/compliance-report",
+            headers={"X-API-Key": org_key},
+        )
+        self.assertEqual(res_blocked.status_code, 200)
+        data_b = res_blocked.json()
+        cc7_2 = data_b["controls"]["CC7.2_change_management"]
+        self.assertGreater(cc7_2["blocked_policy_violations"], 0)
+        self.assertEqual(cc7_2["status"], "violations_blocked")
+
+        # Cleanup test files
+        (state_dir / f"{tampered_sess}.scope.jsonl").unlink(missing_ok=True)
+        (state_dir / f"{tampered_sess}.sig").unlink(missing_ok=True)
 
     def test_layer2_trust_score_calculation(self):
         """L2.4: Test single trend-over-time drift/trust score."""
