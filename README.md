@@ -88,6 +88,4 @@ to verify.
 
 ## License
 
-Not yet decided. Recommend MIT or Apache-2.0 for the open-source CLI/plugin
-if the open-core distribution plan discussed alongside this still holds —
-pick before the first public commit, not after.
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.

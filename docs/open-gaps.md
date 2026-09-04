@@ -1,5 +1,8 @@
 # Open Gaps
 
+> [!NOTE]
+> **Roadmap Note**: These gaps refer to the broader LSA enterprise control plane and centralized multi-tenant deployment roadmap. For immediate agent runtime drift detection, see `README.md` and the verified test suite in `tests/unit/`.
+
 ## Still missing for a complete production product
 
 - broader tenant/customer-grade authn/authz and fuller multi-org / multi-project RBAC if product scope expands beyond one org

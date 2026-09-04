@@ -1,5 +1,8 @@
 # Current State
 
+> [!NOTE]
+> **Architecture Status Note**: This document outlines the historical and aspirational design of the full-scale LSA enterprise control plane from the upstream `intent-core` research project (FastAPI control plane, distributed Postgres schema, and centralized worker architecture). In the current release, `intent-guard` focuses exclusively on the stdlib zero-dependency detection engine and agent safety hook system. The FastAPI backend and durable Postgres persistence described below are scheduled for Phase 2 integration (see P1 Directive).
+
 ## Product shape
 
 Living Systems Auditor is no longer a thin prototype. It is a production-shaped backend and control plane for:

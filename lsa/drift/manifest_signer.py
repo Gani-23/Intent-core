@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """HMAC-SHA256 intent manifest signing.
 
-Provides tamper-proof chain of custody for the original task description.
-A signed scope proves the task text has not been rewritten by a compromised
-agent between UserPromptSubmit and the PreToolUse/Stop checks.
+Provides tamper-evident integrity checking for the original task description.
+Detects inadvertent modification, race conditions, or accidental scope rewrites
+between UserPromptSubmit and PreToolUse/Stop checks.
 
-Key lives at .intent-guard/machine.key — excluded from git, never logged
-(Rule 8). Generated once per machine on first use.
+SECURITY BOUNDARY NOTE:
+In local-only developer deployment, the signing key lives at .intent-guard/machine.key
+and is accessible by the local user process. Therefore, this mechanism provides
+tamper-evident integrity against accidental modification, not cryptographic non-repudiation
+against a co-resident adversarial process. Full adversarial isolation requires out-of-process
+daemon custody or remote signature verification (planned for enterprise backend).
 """
 from __future__ import annotations
 

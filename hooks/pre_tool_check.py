@@ -20,6 +20,9 @@ from pathlib import Path
 
 STATE_DIR = Path(".intent-guard")
 _STRICT = os.environ.get("INTENT_GUARD_MODE", "").lower() == "strict"
+# Verification error policy: default fail-open for local developer convenience,
+# fail-closed when INTENT_GUARD_FAIL_CLOSED=true or under strict enterprise policy.
+_FAIL_CLOSED = os.environ.get("INTENT_GUARD_FAIL_CLOSED", "false").lower() in ("true", "1", "yes")
 
 # Highest-risk patterns that warrant blocking even pre-execution
 # These are a stricter subset of DESTRUCTIVE_PATTERNS in mutation_rules.py
@@ -51,11 +54,13 @@ def _load_scope_text(session_id: str) -> str:
 
 def _verify_scope_signature(session_id: str, task_text: str) -> tuple[bool, str]:
     """Check HMAC sig without importing from lsa (hooks run standalone)."""
-    import hmac, hashlib, secrets
+    import hmac, hashlib
     sig_path = STATE_DIR / f"{session_id}.sig"
     key_path = STATE_DIR / "machine.key"
     if not sig_path.exists() or not key_path.exists():
-        return True, "unsigned (no key yet)"  # First session — not a tamper
+        if _FAIL_CLOSED and _STRICT:
+            return False, "sig file or key missing under fail-closed policy"
+        return True, "unsigned (first session or key missing)"
     try:
         key = bytes.fromhex(key_path.read_text().strip())
         stored_sig = json.loads(sig_path.read_text()).get("sig", "")
@@ -63,9 +68,11 @@ def _verify_scope_signature(session_id: str, task_text: str) -> tuple[bool, str]
                              separators=(",", ":"), sort_keys=True).encode()
         expected = hmac.new(key, payload, "sha256").hexdigest()
         ok = hmac.compare_digest(expected, stored_sig)
-        return ok, "ok" if ok else "HMAC mismatch"
+        return ok, "ok" if ok else "HMAC mismatch — scope text modified"
     except Exception as e:
-        return True, f"verify error: {e}"  # Fail-open: don't block on verify errors
+        if _FAIL_CLOSED:
+            return False, f"verify error under fail-closed policy: {e}"
+        return True, f"verify error: {e}"
 
 
 def _matches_critical(command: str) -> tuple[bool, str]:
@@ -112,13 +119,13 @@ def main() -> int:
     if not _STRICT:
         return 0  # Observe-only mode — never block
 
-    # ── STRICT MODE: verify signature then check critical patterns ─────────────
+    # ── STRICT MODE: verify scope integrity then check critical patterns ──────
     task_text = _load_scope_text(session_id)
     sig_ok, sig_reason = _verify_scope_signature(session_id, task_text)
     if not sig_ok:
         result = json.dumps({
             "continue": False,
-            "reason": f"[intent-guard] TAMPER ALERT: scope manifest signature invalid ({sig_reason}). Blocking tool call until scope integrity is restored.",
+            "reason": f"[intent-guard strict] SCOPE INTEGRITY VIOLATION: {sig_reason}. Blocking tool execution.",
         })
         sys.stdout.write(result)
         return 0

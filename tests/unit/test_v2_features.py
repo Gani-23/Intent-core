@@ -146,6 +146,27 @@ class TestSessionLedger(unittest.TestCase):
         cross = [p for p in patterns if p.pattern == "READ_WRITE_DELETE_ESCALATION"]
         self.assertEqual(cross, [])
 
+    def test_benign_iterative_read_write_does_not_fire_false_positive(self):
+        # Normal dev: session 1 reads file (none), session 2 writes file (none)
+        entries = [
+            self._make_entry("s1", "app/utils.py", "READ", "none"),
+            self._make_entry("s2", "app/utils.py", "WRITE", "none"),
+        ]
+        patterns = analyze_ledger(entries)
+        read_writes = [p for p in patterns if p.pattern == "READ_THEN_WRITE_CROSS_SESSION"]
+        self.assertEqual(read_writes, [], "Normal iterative edit must NOT trigger false positive alert")
+
+    def test_read_then_write_with_elevated_severity_fires_low_severity(self):
+        # Suspicious dev: session 1 reads file (none), session 2 writes with medium/high alert
+        entries = [
+            self._make_entry("s1", "config/secrets.env", "READ", "none"),
+            self._make_entry("s2", "config/secrets.env", "WRITE", "high"),
+        ]
+        patterns = analyze_ledger(entries)
+        read_writes = [p for p in patterns if p.pattern == "READ_THEN_WRITE_CROSS_SESSION"]
+        self.assertEqual(len(read_writes), 1)
+        self.assertEqual(read_writes[0].severity, "low")
+
 
 # ── Invariant checker ─────────────────────────────────────────────────────────
 class TestInvariantChecker(unittest.TestCase):
@@ -272,9 +293,10 @@ class TestPreToolCheck(unittest.TestCase):
         env = dict(os.environ)
         if env_extras:
             env.update(env_extras)
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        hook_path = repo_root / "hooks" / "pre_tool_check.py"
         result = subprocess.run(
-            [sys.executable,
-             "/Users/gani/Desktop/Intent-drive/living-systems-auditor/hooks/pre_tool_check.py"],
+            [sys.executable, str(hook_path)],
             input=json.dumps(payload), text=True, capture_output=True, env=env,
         )
         return result.returncode, result.stdout
@@ -304,6 +326,43 @@ class TestPreToolCheck(unittest.TestCase):
         if out.strip():
             data = json.loads(out)
             self.assertTrue(data.get("continue", True))
+
+    def test_strict_mode_blocks_when_scope_tampered(self):
+        # Setup session scope and signature
+        import lsa.drift.manifest_signer as ms
+        orig_state = ms.STATE_DIR
+        try:
+            ms.STATE_DIR = Path(".intent-guard")
+            ms.write_sig_file("t_tamper", "Original Prompt")
+            # Now rewrite scope with different prompt
+            scope_file = Path(".intent-guard/t_tamper.scope.jsonl")
+            scope_file.write_text(json.dumps({"prompt": "Tampered Prompt"}) + "\n")
+
+            payload = {"session_id": "t_tamper", "tool_name": "Bash",
+                       "tool_input": {"command": "echo benign"}}
+            rc, out = self._run_hook(payload, {"INTENT_GUARD_MODE": "strict"})
+            self.assertEqual(rc, 0)
+            self.assertTrue(bool(out.strip()))
+            data = json.loads(out)
+            self.assertFalse(data.get("continue", True))
+            self.assertIn("SCOPE INTEGRITY VIOLATION", data.get("reason", ""))
+        finally:
+            (Path(".intent-guard/t_tamper.sig")).unlink(missing_ok=True)
+            (Path(".intent-guard/t_tamper.scope.jsonl")).unlink(missing_ok=True)
+            ms.STATE_DIR = orig_state
+
+    def test_fail_closed_mode_blocks_when_sig_missing(self):
+        payload = {"session_id": "missing_sig_sess", "tool_name": "Bash",
+                   "tool_input": {"command": "echo test"}}
+        rc, out = self._run_hook(payload, {
+            "INTENT_GUARD_MODE": "strict",
+            "INTENT_GUARD_FAIL_CLOSED": "true"
+        })
+        self.assertEqual(rc, 0)
+        self.assertTrue(bool(out.strip()))
+        data = json.loads(out)
+        self.assertFalse(data.get("continue", True))
+        self.assertIn("SCOPE INTEGRITY VIOLATION", data.get("reason", ""))
 
 
 if __name__ == "__main__":

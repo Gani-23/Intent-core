@@ -111,16 +111,21 @@ def analyze_ledger(entries: list[LedgerEntry]) -> list[LedgerPattern]:
                 severity="critical",
             ))
         elif {"READ", "WRITE"} <= ops_seen and len(sessions_involved) > 1:
-            patterns.append(LedgerPattern(
-                pattern="READ_THEN_WRITE_CROSS_SESSION",
-                targets=[target],
-                sessions=sessions_involved,
-                description=(
-                    f"Target '{target}' read in one session then written in another — "
-                    f"scope creep or data exfil pattern."
-                ),
-                severity="high",
-            ))
+            # Ordinary iterative dev reads in one session and writes in another.
+            # Only flag if at least one operation was flagged with severity > none,
+            # or if the target is a sensitive/critical resource.
+            has_flagged_op = any(_SEV_ORDER.get(e.severity, 0) >= 2 for e in tevents)
+            if has_flagged_op:
+                patterns.append(LedgerPattern(
+                    pattern="READ_THEN_WRITE_CROSS_SESSION",
+                    targets=[target],
+                    sessions=sessions_involved,
+                    description=(
+                        f"Target '{target}' read in one session then written with elevated severity in another — "
+                        f"possible scope creep or data exfil pattern."
+                    ),
+                    severity="low",
+                ))
 
     # ── 2. Recurrence: same critical/high violation in >1 session ─────────────
     crit_targets: dict[str, list[str]] = {}
