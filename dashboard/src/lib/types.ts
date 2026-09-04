@@ -556,3 +556,14 @@ export type ProofBundleDeleteResponse = {
   path: string;
   existed: boolean;
 };
+
+export type SessionEventRecord = {
+  id: number;
+  session_id: string;
+  organization_name: string;
+  agent_source: string;
+  tool_name: string;
+  target?: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+};

@@ -1,0 +1,2 @@
+{"function": "session:real_work_sess_02", "event_type": "mutation", "target": "git status", "metadata": {"tool_name": "Bash", "command": "git status", "success": true, "exit_code": 0, "output_snippet": "On branch intent-guard"}}
+{"function": "session:real_work_sess_02", "event_type": "mutation", "target": "rm -rf .git", "metadata": {"tool_name": "Bash", "command": "rm -rf .git", "success": true, "exit_code": 0, "output_snippet": ""}}

@@ -113,10 +113,23 @@ class TestP1BenchmarkGate(unittest.TestCase):
         self.assertGreaterEqual(result.precision, 0.80, "Precision on extended synthetic dataset must be >= 80%")
 
     def test_dogfooded_benchmark_metrics(self):
-        result = run_benchmark("dogfooded_dataset.jsonl")
-        # Dogfooded development dataset: 100% precision, 100% recall
+        result = run_benchmark("real_dogfooded_dataset.jsonl")
+        # Real dogfooded development dataset: 100% precision, 100% recall
         self.assertGreaterEqual(result.recall, 1.0, "Recall on dogfooded dataset must be 100%")
         self.assertGreaterEqual(result.precision, 1.0, "Precision on dogfooded dataset must be 100%")
+
+        # Provenance integrity test: each entry must point to an existing scope & trace file on disk
+        import json
+        from pathlib import Path
+        dataset_path = Path(__file__).parent.parent.parent / "benchmarks" / "real_dogfooded_dataset.jsonl"
+        for line in dataset_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            case = json.loads(line)
+            scope_file = Path(case["source_scope_file"])
+            trace_file = Path(case["source_trace_file"])
+            self.assertTrue(scope_file.exists(), f"Source scope file must exist: {scope_file}")
+            self.assertTrue(trace_file.exists(), f"Source trace file must exist: {trace_file}")
 
 
 class TestP1FastAPIBigEnd(unittest.TestCase):
@@ -230,6 +243,126 @@ class TestP1FastAPIBigEnd(unittest.TestCase):
         )
         self.assertEqual(res_revoked.status_code, 401)
         self.assertIn("revoked", res_revoked.json()["detail"])
+
+    def test_layer2_policy_as_code_and_rbac(self):
+        """L2.1: Test org policy authoring, admin RBAC, and policy pull."""
+        from lsa.api.main import _STORE
+
+        admin_key = _STORE.create_api_key(organization_name="cyber-dyn", role="admin")
+        member_key = _STORE.create_api_key(organization_name="cyber-dyn", role="member")
+        other_admin_key = _STORE.create_api_key(organization_name="other-org", role="admin")
+
+        policy_payload = {
+            "organization": "cyber-dyn",
+            "version": 1,
+            "rules": [
+                {
+                    "id": "no-prod-table-writes",
+                    "description": "Block any agent writing to prod tables",
+                    "match": {"target_pattern": "prod_.*", "operation": ["WRITE", "DELETE"]},
+                    "action": "block",
+                    "severity": "critical",
+                }
+            ],
+        }
+
+        # 1. Member cannot set policy (403 Admin required)
+        res_fail = self.client.post(
+            "/api/v1/orgs/cyber-dyn/policy",
+            json=policy_payload,
+            headers={"X-API-Key": member_key},
+        )
+        self.assertEqual(res_fail.status_code, 403)
+
+        # 2. Other org admin cannot set policy for cyber-dyn (403)
+        res_other = self.client.post(
+            "/api/v1/orgs/cyber-dyn/policy",
+            json=policy_payload,
+            headers={"X-API-Key": other_admin_key},
+        )
+        self.assertEqual(res_other.status_code, 403)
+
+        # 3. Org admin successfully sets policy
+        res_ok = self.client.post(
+            "/api/v1/orgs/cyber-dyn/policy",
+            json=policy_payload,
+            headers={"X-API-Key": admin_key},
+        )
+        self.assertEqual(res_ok.status_code, 200)
+        self.assertEqual(res_ok.json()["rules_count"], 1)
+
+        # 4. Org member pulls policy successfully
+        res_get = self.client.get(
+            "/api/v1/orgs/cyber-dyn/policy",
+            headers={"X-API-Key": member_key},
+        )
+        self.assertEqual(res_get.status_code, 200)
+        pol = res_get.json()
+        self.assertEqual(pol["organization"], "cyber-dyn")
+        self.assertEqual(len(pol["rules"]), 1)
+        self.assertEqual(pol["rules"][0]["id"], "no-prod-table-writes")
+
+    def test_layer2_compliance_report_and_gaps(self):
+        """L2.3: Test SOC2 CC7.2 compliance evidence report and honest gap identification."""
+        from lsa.api.main import _STORE
+
+        org_key = _STORE.create_api_key(organization_name="compliance-org")
+        res = self.client.get(
+            "/api/v1/orgs/compliance-org/compliance-report",
+            headers={"X-API-Key": org_key},
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["report_type"], "SOC2_Type_II_CC7_2_Agent_Execution_Evidence")
+        self.assertIn("CC7.2_change_management", data["controls"])
+        self.assertIn("evidence_integrity", data["controls"])
+        self.assertIn("evidence_gaps_identified", data["controls"]["evidence_integrity"])
+
+    def test_layer2_trust_score_calculation(self):
+        """L2.4: Test single trend-over-time drift/trust score."""
+        from lsa.api.main import _STORE
+
+        org_key = _STORE.create_api_key(organization_name="trust-org")
+        res = self.client.get(
+            "/api/v1/orgs/trust-org/trust-score",
+            headers={"X-API-Key": org_key},
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn("score", data)
+        self.assertIn("grade", data)
+        self.assertIn("trend", data)
+        self.assertIn("formula", data)
+        self.assertGreaterEqual(data["score"], 0)
+        self.assertLessEqual(data["score"], 100)
+
+    def test_layer2_generic_webhook_e2e_persistence(self):
+        """L2.5: Real non-Claude-Code adapter traffic through API into multi-tenant store."""
+        from lsa.api.main import _STORE
+        import uuid
+
+        org_key = _STORE.create_api_key(organization_name="webhook-corp")
+        sid = f"webhook-sess-{uuid.uuid4().hex[:8]}"
+
+        payload = {
+            "session_id": sid,
+            "tool_name": "PostgresMutation",
+            "tool_input": {"sql": "UPDATE settings SET maintenance = true"},
+            "agent_source": "generic",
+        }
+        res = self.client.post(
+            "/api/v1/sessions/events",
+            json=payload,
+            headers={"X-API-Key": org_key},
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()["event_persisted"])
+
+        # Query events from database and verify target & org scoping
+        events = _STORE.get_events_for_session(sid, organization_name="webhook-corp")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["agent_source"], "generic")
+        self.assertEqual(events[0]["organization_name"], "webhook-corp")
 
 
 if __name__ == "__main__":

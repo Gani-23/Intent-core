@@ -19,6 +19,7 @@ const LoginPage = lazy(() => import("./pages/LoginPage"));
 const AdminAccessPage = lazy(() => import("./pages/AdminAccessPage"));
 const AdminWorkspacePage = lazy(() => import("./pages/AdminWorkspacePage"));
 const AdminSecretsPage = lazy(() => import("./pages/AdminSecretsPage"));
+const SessionEventsPage = lazy(() => import("./pages/SessionEventsPage"));
 
 export default function App() {
   useLenisScroll();
@@ -56,6 +57,7 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+            <Route path="/sessions/events" element={<SessionEventsPage />} />
             <Route
               path="/command/reviews"
               element={

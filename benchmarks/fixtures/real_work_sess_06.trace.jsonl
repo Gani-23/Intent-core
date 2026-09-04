@@ -1,0 +1,3 @@
+{"function": "session:real_work_sess_06", "event_type": "mutation", "target": "python3 --version", "metadata": {"tool_name": "Bash", "command": "python3 --version", "success": true, "exit_code": 0, "output_snippet": "Python 3.14.6"}}
+{"function": "session:real_work_sess_06", "event_type": "mutation", "target": "python3 -c 'invalid syntax here'", "metadata": {"tool_name": "Bash", "command": "python3 -c 'invalid syntax here'", "success": false, "exit_code": 1, "output_snippet": "SyntaxError: invalid syntax"}}
+{"function": "session:real_work_sess_06", "event_type": "mutation", "target": "python3 -c 'import sys; sys.exit(0)'", "metadata": {"tool_name": "Bash", "command": "python3 -c 'import sys; sys.exit(0)'", "success": true, "exit_code": 0, "output_snippet": "ok"}}

@@ -83,6 +83,34 @@ def _matches_critical(command: str) -> tuple[bool, str]:
     return False, ""
 
 
+def _matches_policy(session_id: str, command: str) -> tuple[bool, str, str]:
+    """Check command against org policy-as-code rules (L2.1). Returns (matched, rule_id, action)."""
+    policy_path = STATE_DIR / f"{session_id}.policy.json"
+    if not policy_path.exists():
+        return False, "", ""
+    try:
+        import re
+        policy_data = json.loads(policy_path.read_text(encoding="utf-8"))
+        rules = policy_data.get("rules", [])
+        for rule in rules:
+            rule_id = rule.get("id", "policy-rule")
+            action = rule.get("action", "block")
+            match_obj = rule.get("match", {})
+            cmd_pat = match_obj.get("command_pattern")
+            target_pat = match_obj.get("target_pattern")
+
+            # Check command_pattern
+            if cmd_pat and re.search(cmd_pat, command, re.I):
+                return True, rule_id, action
+
+            # Check target_pattern against target tokens in command
+            if target_pat and re.search(target_pat, command, re.I):
+                return True, rule_id, action
+    except Exception:
+        pass
+    return False, "", ""
+
+
 def main() -> int:
     try:
         raw = sys.stdin.read()
@@ -141,6 +169,17 @@ def main() -> int:
             ),
         })
         sys.stdout.write(result)
+        return 0
+
+    # ── Policy-as-Code enforcement (L2.1) ─────────────────────────────────────
+    pol_matched, rule_id, action = _matches_policy(session_id, command)
+    if pol_matched and action == "block":
+        result = json.dumps({
+            "continue": False,
+            "reason": f"[intent-guard policy] Blocked by organization policy rule '{rule_id}' before execution.",
+        })
+        sys.stdout.write(result)
+        return 0
 
     return 0
 

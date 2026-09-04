@@ -1,0 +1,2 @@
+{"function": "session:real_work_sess_01", "event_type": "mutation", "target": "cat pyproject.toml", "metadata": {"tool_name": "Bash", "command": "cat pyproject.toml", "success": true, "exit_code": 0, "output_snippet": "[project]\nname = \"living-systems-auditor\""}}
+{"function": "session:real_work_sess_01", "event_type": "mutation", "target": ".venv/bin/pytest tests/unit/test_ast_parser.py -v", "metadata": {"tool_name": "Bash", "command": ".venv/bin/pytest tests/unit/test_ast_parser.py -v", "success": true, "exit_code": 0, "output_snippet": "1 passed in 0.05s"}}

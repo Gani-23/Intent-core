@@ -51,16 +51,32 @@ class SQLiteEventStore:
                 CREATE TABLE IF NOT EXISTS api_keys (
                     key_hash TEXT PRIMARY KEY,
                     organization_name TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'member',
                     key_prefix TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     revoked INTEGER DEFAULT 0
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_org ON api_keys(organization_name)")
+
+            # Ensure role column exists if upgrading table
+            try:
+                conn.execute("ALTER TABLE api_keys ADD COLUMN role TEXT NOT NULL DEFAULT 'member'")
+            except Exception:
+                pass
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS org_policies (
+                    organization_name TEXT PRIMARY KEY,
+                    version INTEGER DEFAULT 1,
+                    policy_yaml TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.commit()
 
-    def create_api_key(self, organization_name: str, raw_key: str | None = None) -> str:
-        """Create and store a hashed API key for an organization. Returns the raw API key."""
+    def create_api_key(self, organization_name: str, raw_key: str | None = None, role: str = "member") -> str:
+        """Create and store a hashed API key for an organization with role ('admin' or 'member'). Returns the raw API key."""
         if not raw_key:
             raw_key = f"lsa_{secrets.token_urlsafe(24)}"
         khash = self.hash_key(raw_key)
@@ -68,11 +84,11 @@ class SQLiteEventStore:
         with self._get_connection() as conn:
             conn.execute(
                 """
-                INSERT INTO api_keys (key_hash, organization_name, key_prefix, revoked)
-                VALUES (?, ?, ?, 0)
-                ON CONFLICT(key_hash) DO UPDATE SET organization_name = excluded.organization_name, revoked = 0
+                INSERT INTO api_keys (key_hash, organization_name, role, key_prefix, revoked)
+                VALUES (?, ?, ?, ?, 0)
+                ON CONFLICT(key_hash) DO UPDATE SET organization_name = excluded.organization_name, role = excluded.role, revoked = 0
                 """,
-                (khash, organization_name, prefix),
+                (khash, organization_name, role, prefix),
             )
             conn.commit()
         return raw_key
@@ -94,7 +110,7 @@ class SQLiteEventStore:
         with self._get_connection() as conn:
             cur = conn.cursor()
             cur.execute(
-                "SELECT organization_name, created_at, revoked FROM api_keys WHERE key_hash = ?",
+                "SELECT organization_name, role, created_at, revoked FROM api_keys WHERE key_hash = ?",
                 (khash,),
             )
             row = cur.fetchone()
@@ -102,8 +118,43 @@ class SQLiteEventStore:
                 return None
             return {
                 "organization_name": row["organization_name"],
+                "role": row["role"] if "role" in row.keys() else "member",
                 "created_at": row["created_at"],
                 "revoked": bool(row["revoked"]),
+            }
+
+    def set_org_policy(self, organization_name: str, policy_yaml: str, version: int = 1) -> None:
+        """Persist or update policy-as-code for an organization."""
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO org_policies (organization_name, version, policy_yaml, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(organization_name) DO UPDATE SET
+                    version = excluded.version,
+                    policy_yaml = excluded.policy_yaml,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (organization_name, version, policy_yaml),
+            )
+            conn.commit()
+
+    def get_org_policy(self, organization_name: str) -> dict[str, Any] | None:
+        """Retrieve policy-as-code for an organization."""
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT organization_name, version, policy_yaml, updated_at FROM org_policies WHERE organization_name = ?",
+                (organization_name,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "organization_name": row["organization_name"],
+                "version": row["version"],
+                "policy_yaml": row["policy_yaml"],
+                "updated_at": row["updated_at"],
             }
 
     def store_event(
@@ -141,6 +192,34 @@ class SQLiteEventStore:
                 )
             else:
                 cursor.execute("SELECT * FROM session_events WHERE session_id = ? ORDER BY id ASC", (session_id,))
+            rows = cursor.fetchall()
+            return [
+                {
+                    "id": row["id"],
+                    "session_id": row["session_id"],
+                    "organization_name": row["organization_name"],
+                    "agent_source": row["agent_source"],
+                    "tool_name": row["tool_name"],
+                    "target": row["target"],
+                    "payload": json.loads(row["payload_json"]),
+                    "created_at": row["created_at"],
+                }
+                for row in rows
+            ]
+
+    def get_recent_events(
+        self, limit: int = 50, organization_name: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Retrieve most recent persisted events, optionally scoped to an organization."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            if organization_name:
+                cursor.execute(
+                    "SELECT * FROM session_events WHERE organization_name = ? ORDER BY id DESC LIMIT ?",
+                    (organization_name, limit),
+                )
+            else:
+                cursor.execute("SELECT * FROM session_events ORDER BY id DESC LIMIT ?", (limit,))
             rows = cursor.fetchall()
             return [
                 {

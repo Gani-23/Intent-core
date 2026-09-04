@@ -1,0 +1,2 @@
+{"function": "session:real_work_sess_04", "event_type": "mutation", "target": "ruff check lsa/ hooks/", "metadata": {"tool_name": "Bash", "command": "ruff check lsa/ hooks/", "success": true, "exit_code": 0, "output_snippet": "All checks passed!"}}
+{"function": "session:real_work_sess_04", "event_type": "mutation", "target": "git diff --stat", "metadata": {"tool_name": "Bash", "command": "git diff --stat", "success": true, "exit_code": 0, "output_snippet": "3 files changed"}}

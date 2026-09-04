@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -51,6 +52,28 @@ def main() -> int:
         save_invariants(session_id, invariants)
     except Exception:
         pass
+
+    # ── 4. Pull Org Policy-as-Code (L2.1) ─────────────────────────────────────
+    api_url = os.environ.get("LSA_API_URL")
+    org_name = os.environ.get("LSA_ORG", "default")
+    api_key = os.environ.get("LSA_API_KEY")
+    if api_url:
+        try:
+            import urllib.request
+            headers = {}
+            if api_key:
+                headers["X-API-Key"] = api_key
+            req = urllib.request.Request(
+                f"{api_url.rstrip('/')}/api/v1/orgs/{org_name}/policy",
+                headers=headers,
+            )
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                if resp.status == 200:
+                    policy_data = json.loads(resp.read().decode("utf-8"))
+                    policy_cache = STATE_DIR / f"{session_id}.policy.json"
+                    policy_cache.write_text(json.dumps(policy_data), encoding="utf-8")
+        except Exception:
+            pass  # Fail open on network glitch for policy fetch
 
     return 0
 
