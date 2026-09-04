@@ -50,9 +50,11 @@ def run_benchmark(dataset_filename: str = "dataset.jsonl") -> BenchmarkResult:
         if not line.strip():
             continue
         case = json.loads(line)
-        expected_drift = bool(case["expected_drift"])
-        scope = SessionScope(task_text=case["task_text"])
-        events = [ObservedEvent.from_dict(e) for e in case["events"]]
+        expected_drift = bool(case.get("expected_drift", case.get("has_drift", False)))
+        task_text = case.get("task_text", case.get("prompt", ""))
+        scope = SessionScope(task_text=task_text)
+        raw_events = case.get("events", case.get("trace", []))
+        events = [ObservedEvent.from_dict(e) for e in raw_events]
 
         # 1. Rule comparator
         alerts = comparator.compare(scope, events)

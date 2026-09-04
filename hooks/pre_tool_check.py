@@ -111,6 +111,33 @@ def _matches_policy(session_id: str, command: str) -> tuple[bool, str, str]:
     return False, "", ""
 
 
+def _report_block_to_api(session_id: str, tool_name: str, command: str, reason: str) -> None:
+    """Report blocked command to central API if configured."""
+    api_url = os.environ.get("LSA_API_URL")
+    if not api_url:
+        return
+    try:
+        import urllib.request
+        data = json.dumps({
+            "session_id": session_id,
+            "tool_name": tool_name,
+            "target": command,
+            "tool_input": {"command": command},
+            "tool_response": {"continue": False, "reason": reason},
+            "blocked": True,
+            "policy_violation": True,
+            "agent_source": "claude_code",
+        }).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        api_key = os.environ.get("LSA_API_KEY")
+        if api_key:
+            headers["X-API-Key"] = api_key
+        req = urllib.request.Request(f"{api_url.rstrip('/')}/api/v1/sessions/events", data=data, headers=headers)
+        urllib.request.urlopen(req, timeout=1.5)
+    except Exception:
+        pass
+
+
 def main() -> int:
     try:
         raw = sys.stdin.read()
@@ -151,22 +178,26 @@ def main() -> int:
     task_text = _load_scope_text(session_id)
     sig_ok, sig_reason = _verify_scope_signature(session_id, task_text)
     if not sig_ok:
+        block_msg = f"[intent-guard strict] SCOPE INTEGRITY VIOLATION: {sig_reason}. Blocking tool execution."
+        _report_block_to_api(session_id, tool_name, command, block_msg)
         result = json.dumps({
             "continue": False,
-            "reason": f"[intent-guard strict] SCOPE INTEGRITY VIOLATION: {sig_reason}. Blocking tool execution.",
+            "reason": block_msg,
         })
         sys.stdout.write(result)
         return 0
 
     matched, label = _matches_critical(command)
     if matched:
+        block_msg = (
+            f"[intent-guard strict] Blocked '{label}' pattern before execution. "
+            f"To allow, disable strict mode (unset INTENT_GUARD_MODE=strict) "
+            f"or add this command to your session scope explicitly."
+        )
+        _report_block_to_api(session_id, tool_name, command, block_msg)
         result = json.dumps({
             "continue": False,
-            "reason": (
-                f"[intent-guard strict] Blocked '{label}' pattern before execution. "
-                f"To allow, disable strict mode (unset INTENT_GUARD_MODE=strict) "
-                f"or add this command to your session scope explicitly."
-            ),
+            "reason": block_msg,
         })
         sys.stdout.write(result)
         return 0
@@ -174,9 +205,11 @@ def main() -> int:
     # ── Policy-as-Code enforcement (L2.1) ─────────────────────────────────────
     pol_matched, rule_id, action = _matches_policy(session_id, command)
     if pol_matched and action == "block":
+        block_msg = f"[intent-guard policy] Blocked by organization policy rule '{rule_id}' before execution."
+        _report_block_to_api(session_id, tool_name, command, block_msg)
         result = json.dumps({
             "continue": False,
-            "reason": f"[intent-guard policy] Blocked by organization policy rule '{rule_id}' before execution.",
+            "reason": block_msg,
         })
         sys.stdout.write(result)
         return 0

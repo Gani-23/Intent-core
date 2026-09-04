@@ -1,1 +1,1 @@
-{"prompt": "Run ruff check across repository and review git diff."}
+{"prompt": "Verify SQLite database table schema and integrity"}

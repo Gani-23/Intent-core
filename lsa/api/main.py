@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 from fastapi import FastAPI, HTTPException, Header, Depends
@@ -98,9 +99,35 @@ def ingest_session_event(
         "target": req.target or str(req.tool_input.get("sql", req.tool_input.get("command", req.tool_input.get("file_path", "")))),
         "tool_input": req.tool_input,
         "tool_response": req.tool_response,
+        **req.tool_input,
     }
     redacted_payload = redact_json_obj(payload)
     event = adapter.parse_event(redacted_payload)
+
+    # Detect blocked or policy violation status
+    is_blocked = req.blocked
+    if not is_blocked and isinstance(req.tool_response, dict):
+        if req.tool_response.get("continue") is False or "Blocked" in str(req.tool_response.get("reason", "")):
+            is_blocked = True
+
+    is_violation = req.policy_violation or is_blocked
+    if not is_violation:
+        policy_rec = _STORE.get_org_policy(auth.organization_name)
+        if policy_rec and policy_rec.get("policy_yaml"):
+            try:
+                import yaml, re
+                p_data = yaml.safe_load(policy_rec["policy_yaml"])
+                target_cmd = req.target or str(req.tool_input.get("sql", req.tool_input.get("command", req.tool_input.get("file_path", ""))))
+                for r in p_data.get("rules", []):
+                    m = r.get("match", {})
+                    pat = m.get("command_pattern") or m.get("target_pattern")
+                    if pat and re.search(pat, target_cmd, re.I):
+                        is_violation = True
+                        if r.get("action") == "block":
+                            is_blocked = True
+                        break
+            except Exception:
+                pass
 
     # 2. Persist to SQLite store, strictly scoping organization to the verified API key
     persisted = False
@@ -113,6 +140,8 @@ def ingest_session_event(
                 target=event.target,
                 payload=redacted_payload,
                 organization_name=auth.organization_name,
+                blocked=is_blocked,
+                policy_violation=is_violation,
             )
             persisted = row_id > 0
         except Exception:
@@ -203,9 +232,49 @@ def get_compliance_report(
             "Ephemeral sessions without durable backend upload may be omitted."
         )
 
-    # Classify operations for SOC2 CC7.2 access control & change management
+    # Real per-session HMAC signature verification check (C1)
+    from pathlib import Path
+    from lsa.drift.manifest_signer import verify_sig_file
+    session_signature_status: dict[str, Any] = {}
+    for sess in unique_sessions:
+        scope_path = Path(".intent-guard") / f"{sess}.scope.jsonl"
+        if not scope_path.exists():
+            session_signature_status[sess] = {
+                "verified": False,
+                "reason": "Scope manifest missing (.scope.jsonl not found)",
+            }
+            continue
+        prompts = []
+        try:
+            for line in scope_path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    prompts.append(json.loads(line).get("prompt", ""))
+            task_text = "\n".join(prompts)
+            ok, reason = verify_sig_file(sess, task_text)
+            session_signature_status[sess] = {
+                "verified": ok,
+                "reason": reason,
+            }
+        except Exception as ex:
+            session_signature_status[sess] = {
+                "verified": False,
+                "reason": f"Verification error: {ex}",
+            }
+
+    if not unique_sessions:
+        all_signatures_verified = None
+    else:
+        all_signatures_verified = all(info["verified"] for info in session_signature_status.values())
+
+    unverified_sessions = [s for s, inf in session_signature_status.items() if not inf["verified"]]
+    if unverified_sessions:
+        evidence_gaps.append(
+            f"Tamper-evident verification unverified or failed for session(s): {', '.join(unverified_sessions)}"
+        )
+
+    # Classify operations for SOC2 CC7.2 access control & change management (C2)
     production_mutations = [e for e in events if "prod" in (e.get("target") or "").lower()]
-    blocked_violations = [e for e in events if "blocked" in (e.get("target") or "").lower()]
+    blocked_violations = [e for e in events if e.get("blocked") or e.get("policy_violation")]
 
     return {
         "report_type": "SOC2_Type_II_CC7_2_Agent_Execution_Evidence",
@@ -221,9 +290,10 @@ def get_compliance_report(
                 "status": "compliant" if not blocked_violations else "violations_blocked",
             },
             "evidence_integrity": {
-                "tamper_evident_signatures_verified": True,
+                "tamper_evident_signatures_verified": all_signatures_verified,
                 "evidence_collection_complete": evidence_collection_complete,
                 "evidence_gaps_identified": evidence_gaps,
+                "per_session_signature_verification": session_signature_status,
             },
         },
         "sessions": unique_sessions[:25],
