@@ -27,12 +27,20 @@ def clean_json_response(raw_text: str) -> dict[str, Any]:
         raise ValueError(f"Failed to parse JSON response: {exc} | Raw text: {text[:200]}") from exc
 
 
+def _get_antigravity_home() -> Path:
+    """Resolve Antigravity data directory portably via env var or home directory."""
+    if os.environ.get("ANTIGRAVITY_HOME"):
+        return Path(os.environ["ANTIGRAVITY_HOME"])
+    return Path.home() / ".gemini" / "antigravity"
+
+
 def get_available_ai_providers() -> dict[str, bool]:
     """Returns boolean availability of AI providers without logging or touching credentials."""
     anthropic_ready = bool(os.environ.get("ANTHROPIC_API_KEY"))
     openai_ready = bool(os.environ.get("OPENAI_API_KEY"))
     gemini_ready = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
-    agentapi_bin = shutil.which("agentapi") or "/Users/gani/.gemini/antigravity/bin/agentapi"
+    agy_home = _get_antigravity_home()
+    agentapi_bin = shutil.which("agentapi") or str(agy_home / "bin" / "agentapi")
     antigravity_ready = os.path.exists(agentapi_bin) and (
         bool(os.environ.get("ANTIGRAVITY_LS_ADDRESS")) or os.path.exists("/Applications/Antigravity.app")
     )
@@ -160,7 +168,8 @@ def call_antigravity_json(
     timeout_seconds: float = 15.0,
 ) -> dict[str, Any]:
     """Invokes Antigravity local agentapi as a zero-cloud-token fallback provider."""
-    agentapi_bin = shutil.which("agentapi") or "/Users/gani/.gemini/antigravity/bin/agentapi"
+    agy_home = _get_antigravity_home()
+    agentapi_bin = shutil.which("agentapi") or str(agy_home / "bin" / "agentapi")
     if not os.path.exists(agentapi_bin):
         raise FileNotFoundError(f"Antigravity agentapi binary not found at {agentapi_bin}")
 
@@ -179,7 +188,7 @@ def call_antigravity_json(
     if not cid:
         raise ValueError(f"Failed to obtain conversationId from agentapi: {res.stdout}")
 
-    transcript_path = Path(f"/Users/gani/.gemini/antigravity/brain/{cid}/.system_generated/logs/transcript.jsonl")
+    transcript_path = agy_home / "brain" / str(cid) / ".system_generated" / "logs" / "transcript.jsonl"
     start_t = time.time()
     raw_content = None
 
@@ -201,8 +210,8 @@ def call_antigravity_json(
             time.sleep(0.25)
     finally:
         # Strict cleanup to adhere to workspace rules (no runtime artifacts left behind)
-        shutil.rmtree(f"/Users/gani/.gemini/antigravity/brain/{cid}", ignore_errors=True)
-        conv_dir = Path("/Users/gani/.gemini/antigravity/conversations")
+        shutil.rmtree(agy_home / "brain" / str(cid), ignore_errors=True)
+        conv_dir = agy_home / "conversations"
         if conv_dir.exists():
             for f in conv_dir.glob(f"{cid}*"):
                 if f.is_dir():
