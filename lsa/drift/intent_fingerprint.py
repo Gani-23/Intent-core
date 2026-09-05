@@ -26,7 +26,7 @@ _PROHIB_PREFIX = re.compile(
     r"(do\s+not|don'?t|never|without\s+(?:prior\s+)?approval|must\s+not|no\s+[\w\s]+(?:writes?|delete|modify|exec))",
     re.I,
 )
-_PATH_PATTERN  = re.compile(r"([\w./-]+\.(?:env|json|yaml|yml|py|sql|sh|tf|ts|js|go|rs|toml)|\b(?:production|prod|main|master)\b)", re.I)
+_PATH_PATTERN  = re.compile(r"((?:\.?[\w./-]+\.(?:env|json|yaml|yml|py|sql|sh|tf|ts|js|go|rs|toml)|\.env(?:\.[\w-]+)?|\b(?:production|prod|main|master)\b))", re.I)
 _TABLE_PATTERN = re.compile(r"\b(users?|accounts?|orders?|payments?|transactions?|sessions?|tokens?|logs?|audit)\b", re.I)
 
 # ── constraint phrases (kept for backward compat) ─────────────────────────────

@@ -15,7 +15,10 @@ from typing import Any
 
 
 class SQLiteEventStore:
-    def __init__(self, db_path: Path | str = ".intent-guard/lsa_events.db") -> None:
+    def __init__(self, db_path: Path | str | None = None) -> None:
+        import os
+        if db_path is None:
+            db_path = os.environ.get("LSA_STORE_PATH", ".intent-guard/lsa_events.db")
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
