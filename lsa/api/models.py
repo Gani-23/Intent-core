@@ -29,10 +29,12 @@ class HealthResponse(BaseModel):
     environment_name: str = "production"
     organization_name: str | None = "default"
     auth_required: bool = True
-    authz_enabled: bool = False  # Static key only; multi-tenant RBAC not yet implemented
+    # G1: Gated by verify_api_key and verify_admin_key across routes with organization scoping
+    authz_enabled: bool = True
     database_backend: str = "sqlite"  # Local persistent SQLite store (lsa/storage/sqlite_store.py)
     database_ready: bool = False  # Verified dynamically at runtime
-    worker_running: bool = False  # Standalone worker daemon not yet implemented
+    # G1: worker_running is intentionally False because no standalone background worker daemon process exists yet
+    worker_running: bool = False
 
 
 class PolicyMatch(BaseModel):

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from unittest.mock import patch, MagicMock
 
-from action.pr_commenter import format_pr_comment, post_or_update_pr_comment, REPORT_MARKER
-from lsa.api.rate_limiter import TokenBucketRateLimiter
+from action.pr_commenter import (
+    format_pr_comment,
+    post_or_update_pr_comment,
+    resolve_pr_number,
+    sanitize_markdown_details,
+    REPORT_MARKER,
+)
+from lsa.api.rate_limiter import SlidingWindowRateLimiter, TokenBucketRateLimiter
 from lsa.reports.state_of_drift import generate_state_of_drift_report, MIN_SESSIONS_THRESHOLD
 from lsa.storage.sqlite_store import SQLiteEventStore
 import lsa.drift.syscall_bridge as sb
@@ -43,8 +50,50 @@ class Layer3AndHardeningTests(unittest.TestCase):
             self.assertEqual(action, "updated")
             self.assertEqual(cid, 42)
 
-    def test_rate_limiter_token_bucket(self) -> None:
-        limiter = TokenBucketRateLimiter(requests_per_minute=3)
+    def test_resolve_pr_number_from_env_and_event_payload(self) -> None:
+        import tempfile
+
+        # 1. From PR_NUMBER env var
+        with patch.dict(os.environ, {"PR_NUMBER": "123"}, clear=False):
+            self.assertEqual(resolve_pr_number(), 123)
+
+        # 2. From GITHUB_EVENT_PATH pull_request payload
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as tf:
+            tf.write('{"pull_request": {"number": 456}}')
+            tf.flush()
+            with patch.dict(os.environ, {"PR_NUMBER": "", "GITHUB_EVENT_PATH": tf.name}, clear=False):
+                self.assertEqual(resolve_pr_number(), 456)
+
+        # 3. From GITHUB_EVENT_PATH issue_comment on a PR
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as tf:
+            tf.write('{"issue": {"number": 789, "pull_request": {"html_url": "https://..."}}}')
+            tf.flush()
+            with patch.dict(os.environ, {"PR_NUMBER": "", "GITHUB_EVENT_PATH": tf.name}, clear=False):
+                self.assertEqual(resolve_pr_number(), 789)
+
+        # 4. Non-PR event (e.g., push event)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as tf:
+            tf.write('{"ref": "refs/heads/main", "commits": []}')
+            tf.flush()
+            with patch.dict(os.environ, {"PR_NUMBER": "", "GITHUB_EVENT_PATH": tf.name}, clear=False):
+                self.assertIsNone(resolve_pr_number())
+
+    def test_sanitize_markdown_details(self) -> None:
+        # Escapes <details> and </details> tags
+        payload = "<details>malicious</details>"
+        sanitized = sanitize_markdown_details(payload)
+        self.assertNotIn("<details>", sanitized)
+        self.assertIn("&lt;details&gt;", sanitized)
+
+        # Caps excessive length
+        oversized = "a" * 20000
+        truncated = sanitize_markdown_details(oversized, max_length=1000)
+        self.assertLessEqual(len(truncated), 1100)
+        self.assertIn("Report truncated", truncated)
+
+    def test_rate_limiter_sliding_window(self) -> None:
+        self.assertIs(TokenBucketRateLimiter, SlidingWindowRateLimiter)
+        limiter = SlidingWindowRateLimiter(requests_per_minute=3)
         # 3 calls should pass
         for _ in range(3):
             allowed, _ = limiter.check_rate_limit("user-key")

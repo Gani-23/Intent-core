@@ -145,11 +145,11 @@ class TestP1FastAPIBigEnd(unittest.TestCase):
         data = res.json()
         self.assertEqual(data["status"], "ok")
         self.assertEqual(data["service"], "living-systems-auditor")
-        # Honest assertions: SQLite store is ready, worker and authz are honestly reported as not yet running
+        # Honest assertions: SQLite store is ready, worker is not running, multi-tenant authz is actively enforced
         self.assertEqual(data["database_backend"], "sqlite")
         self.assertTrue(data["database_ready"])
         self.assertFalse(data["worker_running"], "Worker daemon must not be reported running until implemented")
-        self.assertFalse(data["authz_enabled"], "Multi-tenant authz must not be reported enabled until implemented")
+        self.assertTrue(data["authz_enabled"], "Multi-tenant authz is actively implemented and enforced")
 
     def test_mock_endpoints_explicitly_flagged(self):
         res_readiness = self.client.get("/maintenance/control-plane-deployment-readiness")

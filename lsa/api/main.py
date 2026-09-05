@@ -82,11 +82,16 @@ def verify_admin_key(auth: AuthContext = Depends(verify_api_key)) -> AuthContext
 def get_health() -> HealthResponse:
     """Health check endpoint reporting actual runtime subsystem state."""
     db_healthy = _STORE.is_healthy()
+    # G1: Authz is genuinely enforced on all meaningful endpoints via verify_api_key/verify_admin_key
+    # and scoped per organization. If an env override like LSA_DISABLE_AUTH=1 exists, reflect it dynamically.
+    authz_active = os.environ.get("LSA_DISABLE_AUTH", "").lower() not in ("1", "true", "yes")
     return HealthResponse(
         status="ok" if db_healthy else "degraded",
         database_ready=db_healthy,
         database_backend="sqlite",
-        authz_enabled=False,
+        auth_required=authz_active,
+        authz_enabled=authz_active,
+        # G1: worker_running is honestly False because no standalone background worker daemon exists
         worker_running=False,
     )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import selectors
 import shutil
 import signal
 import subprocess
@@ -71,24 +72,54 @@ class EbpfObserver:
                 bufsize=1,
                 env=env,
             )
+            assert process.stdout is not None
+            sel = selectors.DefaultSelector()
+            sel.register(process.stdout, selectors.EVENT_READ)
             try:
-                assert process.stdout is not None
-                for raw_line in process.stdout:
-                    line = raw_line.rstrip("\n")
-                    handle.write(line + "\n")
-                    handle.flush()
-                    lines.append(line)
-
-                    if self.config.max_events is not None and len(lines) >= self.config.max_events:
-                        self._terminate(process)
-                        break
-
+                while True:
                     if self.config.duration_seconds is not None:
                         elapsed = time.monotonic() - start_time
-                        if elapsed >= self.config.duration_seconds:
+                        remaining = self.config.duration_seconds - elapsed
+                        if remaining <= 0:
                             self._terminate(process)
                             break
+                        timeout = min(remaining, 0.1)
+                    else:
+                        timeout = 0.1
+
+                    events = sel.select(timeout=timeout)
+                    if events:
+                        raw_line = process.stdout.readline()
+                        if not raw_line:
+                            # EOF reached
+                            break
+                        line = raw_line.rstrip("\n")
+                        handle.write(line + "\n")
+                        handle.flush()
+                        lines.append(line)
+
+                        if self.config.max_events is not None and len(lines) >= self.config.max_events:
+                            self._terminate(process)
+                            break
+
+                        if self.config.duration_seconds is not None:
+                            elapsed = time.monotonic() - start_time
+                            if elapsed >= self.config.duration_seconds:
+                                self._terminate(process)
+                                break
+                    else:
+                        if process.poll() is not None:
+                            # Process exited and no more data waiting
+                            for line in process.stdout:
+                                stripped = line.rstrip("\n")
+                                handle.write(stripped + "\n")
+                                handle.flush()
+                                lines.append(stripped)
+                                if self.config.max_events is not None and len(lines) >= self.config.max_events:
+                                    break
+                            break
             finally:
+                sel.close()
                 if process.stdout is not None:
                     process.stdout.close()
                 return_code = self._wait_for_process(process)

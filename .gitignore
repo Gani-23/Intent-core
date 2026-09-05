@@ -25,6 +25,7 @@ data/control_plane.db*
 data/control_plane.testing.db*
 data/*.jsonl
 data/*.log
+data/**/*.log
 data/*.pid
 data/reports/
 data/intent_graphs/

@@ -1,1 +1,0 @@
-event=network process=python comm=python module=app function_name=charge_customer request_id=req-66ddb7826043-safe-payment traceparent=00-88f30bbf66924e058ab9352c1094c4b0-fd48ba69419344fb-01 target=https://api.stripe.com/v1/charges
