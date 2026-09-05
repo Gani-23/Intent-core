@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import sys
 import urllib.error
@@ -20,14 +21,18 @@ REPORT_MARKER = "<!-- intent-guard-report-marker -->"
 MAX_REPORT_LENGTH = 15000  # Cap maximum embedded length to prevent unbounded payloads
 DEFAULT_HTTP_TIMEOUT = 30  # Timeout for GitHub REST API calls
 
+_HTML_TAG_ESCAPE_RE = re.compile(r"</?\s*(details|summary)\b[^>]*>", re.IGNORECASE)
+
 
 def sanitize_markdown_details(text: str, max_length: int = MAX_REPORT_LENGTH) -> str:
     """Sanitize and limit report text so it cannot break out of <details> or inject raw markdown."""
     text = text.strip()
     if len(text) > max_length:
         text = text[:max_length] + "\n\n... [Report truncated: exceeded 15k characters]"
-    # Escape closing details tags if present in raw content to prevent premature close
-    text = text.replace("</details>", "&lt;/details&gt;").replace("<details>", "&lt;details&gt;")
+    text = _HTML_TAG_ESCAPE_RE.sub(
+        lambda m: m.group(0).replace("<", "&lt;").replace(">", "&gt;"),
+        text,
+    )
     return text
 
 

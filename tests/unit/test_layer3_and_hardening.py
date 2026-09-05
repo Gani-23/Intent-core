@@ -79,17 +79,63 @@ class Layer3AndHardeningTests(unittest.TestCase):
                 self.assertIsNone(resolve_pr_number())
 
     def test_sanitize_markdown_details(self) -> None:
-        # Escapes <details> and </details> tags
+        # 1. Escapes simple <details> tags
         payload = "<details>malicious</details>"
         sanitized = sanitize_markdown_details(payload)
         self.assertNotIn("<details>", sanitized)
         self.assertIn("&lt;details&gt;", sanitized)
 
-        # Caps excessive length
+        # 2. Escapes tags with attributes: <details open>...</details open>
+        attr_payload = "<details open>forged section</details open>"
+        attr_sanitized = sanitize_markdown_details(attr_payload)
+        self.assertEqual(attr_sanitized, "&lt;details open&gt;forged section&lt;/details open&gt;")
+
+        # 3. Case-insensitive tags: </DETAILS>
+        case_payload = "</DETAILS>"
+        case_sanitized = sanitize_markdown_details(case_payload)
+        self.assertEqual(case_sanitized, "&lt;/DETAILS&gt;")
+
+        # 4. Summary tags: <summary>fake summary</summary>
+        summary_payload = "<summary>fake summary</summary>"
+        summary_sanitized = sanitize_markdown_details(summary_payload)
+        self.assertEqual(summary_sanitized, "&lt;summary&gt;fake summary&lt;/summary&gt;")
+
+        # 5. Irregular internal whitespace/newlines: < details \n open >
+        irregular_payload = "< details \n open >"
+        irregular_sanitized = sanitize_markdown_details(irregular_payload)
+        self.assertEqual(irregular_sanitized, "&lt; details \n open &gt;")
+
+        # 6. Caps excessive length
         oversized = "a" * 20000
         truncated = sanitize_markdown_details(oversized, max_length=1000)
         self.assertLessEqual(len(truncated), 1100)
         self.assertIn("Report truncated", truncated)
+
+    def test_health_and_auth_unconditional_consistency(self) -> None:
+        from fastapi.testclient import TestClient
+        from lsa.api.main import app
+
+        client = TestClient(app)
+        # Even if LSA_DISABLE_AUTH=1 is set, authz_enabled remains True (Option A)
+        # and unauthenticated protected requests still receive 401.
+        with patch.dict(os.environ, {"LSA_DISABLE_AUTH": "1"}, clear=False):
+            health_res = client.get("/health")
+            self.assertEqual(health_res.status_code, 200)
+            data = health_res.json()
+            self.assertTrue(data["authz_enabled"])
+            self.assertTrue(data["auth_required"])
+
+            # Request to protected endpoint must return 401
+            prot_res = client.post(
+                "/api/v1/sessions/events",
+                json={
+                    "session_id": "test-session",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "ls"},
+                },
+            )
+            self.assertEqual(prot_res.status_code, 401)
+            self.assertEqual(prot_res.json(), {"detail": "Missing X-API-Key header"})
 
     def test_rate_limiter_sliding_window(self) -> None:
         self.assertIs(TokenBucketRateLimiter, SlidingWindowRateLimiter)
