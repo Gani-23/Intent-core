@@ -55,6 +55,15 @@ class SlidingWindowRateLimiter:
         with self._lock:
             self._history.clear()
 
+    def clear(self) -> None:
+        """Alias for reset() to clear all rate limit histories."""
+        self.reset()
+
+    def reset_key(self, key: str) -> None:
+        """Clear rate limit history for a specific key."""
+        with self._lock:
+            self._history.pop(key, None)
+
 
 # Backward compatibility alias
 TokenBucketRateLimiter = SlidingWindowRateLimiter

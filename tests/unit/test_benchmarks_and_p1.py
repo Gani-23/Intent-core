@@ -137,7 +137,13 @@ class TestP1FastAPIBigEnd(unittest.TestCase):
     def setUp(self):
         from fastapi.testclient import TestClient
         from lsa.api.main import app
+        from lsa.api.rate_limiter import get_rate_limiter
+        get_rate_limiter().clear()
         self.client = TestClient(app)
+
+    def tearDown(self):
+        from lsa.api.rate_limiter import get_rate_limiter
+        get_rate_limiter().clear()
 
     def test_health_endpoint_matches_dashboard_schema(self):
         res = self.client.get("/health")
@@ -163,7 +169,12 @@ class TestP1FastAPIBigEnd(unittest.TestCase):
     def test_ingest_event_with_valid_api_key_and_persistence(self):
         import uuid
         from lsa.api.main import _STORE
-        headers = {"X-API-Key": "lsa-test-key-12345"}
+        from lsa.api.rate_limiter import get_rate_limiter
+        get_rate_limiter().clear()
+        # Use an isolated unique API key per test execution to prevent shared-state order dependency
+        test_key = f"test-key-{uuid.uuid4().hex[:12]}"
+        _STORE.create_api_key(organization_name="default", raw_key=test_key)
+        headers = {"X-API-Key": test_key}
         sess_id = f"fastapi-persisted-{uuid.uuid4().hex[:8]}"
         payload = {
             "session_id": sess_id,
