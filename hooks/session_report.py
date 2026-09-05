@@ -35,7 +35,9 @@ STATE_DIR = Path(".intent-guard")
 
 class _Settings:
     def __init__(self) -> None:
-        self.remediation_provider = os.environ.get("INTENT_GUARD_PROVIDER", "failsafe")
+        provider = os.environ.get("INTENT_GUARD_PROVIDER", "failsafe")
+        self.remediation_provider = provider
+        self.preferred_provider = provider
         self.remediation_model = os.environ.get("INTENT_GUARD_MODEL")
         self.remediation_base_url = os.environ.get("INTENT_GUARD_BASE_URL")
         self.remediation_api_key = (
@@ -75,6 +77,74 @@ def load_scope_text(path: Path) -> str:
     return "\n".join(prompts)
 
 
+def _get_proc_info(pid: int) -> tuple[int | None, str]:
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ["ps", "-p", str(pid), "-o", "ppid=,comm="],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        parts = out.split(None, 1)
+        if len(parts) == 2:
+            return int(parts[0]), parts[1]
+        elif len(parts) == 1:
+            return int(parts[0]), ""
+    except Exception:
+        pass
+    return None, ""
+
+
+def resolve_agent_pid(payload: dict) -> int | None:
+    """Resolve the PID of the actual agent process to observe (never self PID).
+
+    Checks in priority order:
+    1. Explicit PID in payload ('agent_pid', 'pid', 'claude_pid', 'process_id')
+    2. Explicit PID in environment ('CLAUDE_CODE_PID', 'CLAUDE_PID', 'AGENT_PID', 'INTENT_GUARD_TARGET_PID')
+    3. Process tree climbing from os.getppid():
+       Hooks are spawned as child processes by Claude Code (or via a shell wrapper like /bin/sh -c).
+       If parent is a shell (/bin/sh, /bin/bash, /bin/zsh), climb to grandparent to locate the actual
+       calling agent process (Node.js / Claude Code runtime).
+    """
+    for key in ("agent_pid", "pid", "claude_pid", "process_id"):
+        val = payload.get(key)
+        if val is not None:
+            try:
+                p = int(val)
+                if p > 1 and p != os.getpid():
+                    return p
+            except (ValueError, TypeError):
+                pass
+
+    for env_key in ("CLAUDE_CODE_PID", "CLAUDE_PID", "AGENT_PID", "INTENT_GUARD_TARGET_PID"):
+        val = os.environ.get(env_key)
+        if val:
+            try:
+                p = int(val)
+                if p > 1 and p != os.getpid():
+                    return p
+            except (ValueError, TypeError):
+                pass
+
+    try:
+        current_pid = os.getppid()
+        for _ in range(3):
+            if current_pid <= 1 or current_pid == os.getpid():
+                break
+            ppid, comm = _get_proc_info(current_pid)
+            base_comm = Path(comm).name.lower()
+            if base_comm in ("sh", "bash", "zsh", "dash"):
+                if ppid and ppid > 1 and ppid != os.getpid():
+                    current_pid = ppid
+                else:
+                    return current_pid
+            else:
+                return current_pid
+        return current_pid if (current_pid > 1 and current_pid != os.getpid()) else None
+    except Exception:
+        return None
+
+
 def main() -> int:
     try:
         raw_text = sys.stdin.read()
@@ -94,14 +164,13 @@ def main() -> int:
 
     events = load_events(trace_path)
     task_text = load_scope_text(scope_path)
-    scope = SessionScope(task_text=task_text)
+    fp = extract_fingerprint(task_text)
+    scope = SessionScope(task_text=task_text, known_paths=fp.authorized_paths)
 
     if not events:
         trace_path.unlink(missing_ok=True)
         scope_path.unlink(missing_ok=True)
         return 0
-
-    fp = extract_fingerprint(task_text)
 
     # ── Pass 1: Regex mutation rules ──────────────────────────────────────────
     rule_alerts = MutationComparator().compare(scope, events)
@@ -138,23 +207,27 @@ def main() -> int:
     ledger_patterns = analyze_ledger(ledger_entries)
 
     # ── Pass 6: Independent OS Syscall Observation & Discrepancy Detection ───
-    # Observes open process file descriptors independently of self-reported agent trace.
+    # Observes open process file descriptors of the agent process independently of self-reported trace.
     syscall_discrepancies: list[str] = []
     syscall_notice: str | None = None
     try:
-        from lsa.drift.models import ObservationMode
-        os_events, obs_mode = observe_process(os.getpid(), duration_seconds=0.2)
-        if obs_mode == ObservationMode.UNAVAILABLE or sys.platform == "win32":
-            syscall_notice = f"Syscall cross-check unavailable on platform '{sys.platform}'. OS process descriptor verification did not run."
-            sys.stderr.write(f"[intent-guard notice] {syscall_notice}\n")
-        elif os_events:
-            self_reported_targets = {e.target for e in events}
-            # Identify sensitive files touched at OS level but missing from self-reported trace
-            for os_ev in os_events:
-                t = os_ev.target
-                if any(k in t.lower() for k in (".env", "id_rsa", "credentials", "secrets", "passwd")):
-                    if t not in self_reported_targets and not any(r in t for r in self_reported_targets):
-                        syscall_discrepancies.append(t)
+        target_pid = resolve_agent_pid(payload)
+        if target_pid is None:
+            syscall_notice = "Agent process identity could not be resolved from hook payload or process tree; OS descriptor spot-check skipped."
+        else:
+            from lsa.drift.models import ObservationMode
+            os_events, obs_mode = observe_process(target_pid, duration_seconds=0.2)
+            if obs_mode == ObservationMode.UNAVAILABLE or sys.platform == "win32":
+                syscall_notice = f"Syscall cross-check unavailable on platform '{sys.platform}'. OS process descriptor verification did not run."
+                sys.stderr.write(f"[intent-guard notice] {syscall_notice}\n")
+            elif os_events:
+                self_reported_targets = {e.target for e in events}
+                # Identify sensitive files touched at OS level but missing from self-reported trace
+                for os_ev in os_events:
+                    t = os_ev.target
+                    if any(k in t.lower() for k in (".env", "id_rsa", "credentials", "secrets", "passwd")):
+                        if t not in self_reported_targets and not any(r in t for r in self_reported_targets):
+                            syscall_discrepancies.append(t)
     except Exception:
         pass
 

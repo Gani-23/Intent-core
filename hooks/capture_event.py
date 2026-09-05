@@ -22,6 +22,9 @@ def classify(tool_name: str, tool_input: dict) -> tuple[str, str, str] | None:
     if tool_name in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
         target = str(tool_input.get("file_path", tool_input.get("notebook_path", "")))
         return target, "", tool_name
+    if tool_name == "Read":
+        target = str(tool_input.get("file_path", tool_input.get("path", "")))
+        return target, "", tool_name
     if tool_name == "Bash":
         command = str(tool_input.get("command", ""))
         return command, command, tool_name
@@ -75,7 +78,7 @@ def main() -> int:
 
     event = {
         "function": f"session:{session_id}",
-        "event_type": "mutation",
+        "event_type": "read" if label == "Read" else "mutation",
         "target": target,
         "metadata": {
             "tool_name": label,

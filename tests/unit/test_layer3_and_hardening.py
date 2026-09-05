@@ -174,6 +174,140 @@ class Layer3AndHardeningTests(unittest.TestCase):
         if anon["observed_sessions"] < MIN_SESSIONS_THRESHOLD:
             self.assertFalse(anon["is_sufficient_for_public_release"])
 
+    def test_b1_capture_event_classifies_read_and_triggers_injection(self) -> None:
+        from hooks.capture_event import classify
+        from lsa.drift.models import ObservedEvent
+        from lsa.drift.injection_detector import detect_injection
+
+        # 1. classify() must handle Read
+        classified = classify("Read", {"file_path": "/workspace/instructions.md"})
+        self.assertEqual(classified, ("/workspace/instructions.md", "", "Read"))
+
+        # 2. Causal injection detection on classified events
+        events = [
+            ObservedEvent(
+                function="session:test",
+                event_type="read",
+                target="/workspace/instructions.md",
+                metadata={"tool_name": "Read"},
+            ),
+            ObservedEvent(
+                function="session:test",
+                event_type="mutation",
+                target="DROP TABLE users",
+                metadata={"tool_name": "Bash", "command": "DROP TABLE users"},
+            ),
+        ]
+        signals = detect_injection("test", events, authorized_paths=[], alert_targets=["DROP TABLE users"])
+        self.assertGreater(len(signals), 0)
+        self.assertEqual(signals[0].read_target, "/workspace/instructions.md")
+        self.assertEqual(signals[0].triggered_action, "DROP TABLE users")
+
+    def test_b2_scope_authorization_thread_paths_and_unmentioned_detection(self) -> None:
+        from lsa.drift.intent_fingerprint import extract_fingerprint
+        from lsa.drift.mutation_rules import MutationComparator, SessionScope
+        from lsa.drift.models import ObservedEvent
+        from fastapi.testclient import TestClient
+        from lsa.api.main import app
+
+        # 1. Legitimate .env touch in task mentioning .env
+        task_env = "Please rotate secrets in .env"
+        fp_env = extract_fingerprint(task_env)
+        self.assertIn(".env", fp_env.authorized_paths)
+        scope_env = SessionScope(task_text=task_env, known_paths=fp_env.authorized_paths)
+        ev_env = ObservedEvent(function="s", event_type="mutation", target=".env", metadata={"command": "echo KEY=1 >> .env"})
+        alerts_env = MutationComparator().compare(scope_env, [ev_env])
+        self.assertEqual(len(alerts_env), 0)
+
+        # 2. Unmentioned target when task defines other paths
+        task_auth = "Fix login logic in auth.py"
+        fp_auth = extract_fingerprint(task_auth)
+        scope_auth = SessionScope(task_text=task_auth, known_paths=fp_auth.authorized_paths)
+        ev_other = ObservedEvent(function="s", event_type="mutation", target="payments.py", metadata={"command": "touch payments.py"})
+        alerts_other = MutationComparator().compare(scope_auth, [ev_other])
+        self.assertGreater(len(alerts_other), 0)
+        self.assertIn("Target was not mentioned anywhere", alerts_other[0].reason)
+
+        # 3. Via evaluate-incident endpoint
+        client = TestClient(app)
+        res_env = client.post(
+            "/api/v1/audit/evaluate-incident",
+            json={"task_text": "Update credentials in .env", "command": "echo A=1 >> .env", "tool_name": "Bash"},
+        )
+        self.assertFalse(res_env.json()["caught"])
+
+        res_other = client.post(
+            "/api/v1/audit/evaluate-incident",
+            json={"task_text": "Fix login logic in auth.py", "command": "touch payments.py", "tool_name": "Bash"},
+        )
+        self.assertTrue(res_other.json()["caught"])
+
+    def test_b3_remediation_provider_preference_resolution(self) -> None:
+        from lsa.remediation.llm_client import build_remediation_client, FailsafeRemediationClient, RemediationRuntimeStatus
+        from hooks.session_report import _Settings
+
+        # Test _Settings propagates INTENT_GUARD_PROVIDER to preferred_provider
+        with patch.dict(os.environ, {"INTENT_GUARD_PROVIDER": "anthropic"}, clear=False):
+            settings = _Settings()
+            self.assertEqual(settings.remediation_provider, "anthropic")
+            self.assertEqual(settings.preferred_provider, "anthropic")
+
+        # Test build_remediation_client uses remediation_provider if preferred_provider is absent
+        class LegacySettings:
+            def __init__(self) -> None:
+                self.remediation_provider = "anthropic"
+                self.remediation_timeout_seconds = 20.0
+
+        with patch("lsa.remediation.llm_client.inspect_remediation_runtime") as mock_inspect:
+            mock_inspect.return_value = RemediationRuntimeStatus(
+                provider="failsafe", model=None, base_url=None, enabled=True,
+                available=True, fallback_active=True, configured=True, blockers=[]
+            )
+            client = build_remediation_client(LegacySettings())
+            self.assertIsInstance(client, FailsafeRemediationClient)
+            self.assertEqual(client.preferred_provider, "anthropic")
+
+    def test_b4_resolve_agent_pid_never_returns_self_pid(self) -> None:
+        from hooks.session_report import resolve_agent_pid
+
+        # 1. From payload
+        self.assertEqual(resolve_agent_pid({"agent_pid": 8888}), 8888)
+
+        # 2. From env
+        with patch.dict(os.environ, {"CLAUDE_CODE_PID": "9999"}, clear=False):
+            self.assertEqual(resolve_agent_pid({}), 9999)
+
+        # 3. From process tree (never self PID)
+        with patch.dict(os.environ, {}, clear=False):
+            resolved = resolve_agent_pid({})
+            self.assertNotEqual(resolved, os.getpid())
+            if resolved is not None:
+                self.assertGreater(resolved, 1)
+
+    def test_c1_default_api_key_gated_to_dev_and_test(self) -> None:
+        import tempfile
+        import importlib
+        from fastapi.testclient import TestClient
+
+        # In production without LSA_API_KEY, lsa-test-key-12345 must be rejected
+        with tempfile.TemporaryDirectory() as td:
+            db_path = os.path.join(td, "test_prod.db")
+            with patch.dict(os.environ, {"LSA_STORE_PATH": db_path, "LSA_ENV": "production"}, clear=False):
+                if "LSA_API_KEY" in os.environ:
+                    del os.environ["LSA_API_KEY"]
+                if "PYTEST_CURRENT_TEST" in os.environ:
+                    del os.environ["PYTEST_CURRENT_TEST"]
+                import lsa.api.main as m
+                importlib.reload(m)
+                client = TestClient(m.app)
+                res = client.post(
+                    "/api/v1/sessions/events",
+                    headers={"X-API-Key": "lsa-test-key-12345"},
+                    json={"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "ls"}},
+                )
+                self.assertEqual(res.status_code, 401)
+                self.assertEqual(res.json(), {"detail": "Invalid API key"})
+
 
 if __name__ == "__main__":
     unittest.main()

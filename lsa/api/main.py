@@ -32,10 +32,21 @@ from lsa.storage.sqlite_store import SQLiteEventStore
 
 _STORE = SQLiteEventStore()
 
-# Seed default development/testing API key if configured
-_DEFAULT_KEY = os.environ.get("LSA_API_KEY", "lsa-test-key-12345")
-if _DEFAULT_KEY:
-    _STORE.create_api_key(organization_name="default", raw_key=_DEFAULT_KEY)
+# C1: API key bootstrap
+# Only seed explicit LSA_API_KEY if configured.
+# If LSA_API_KEY is not set, only seed default dev key "lsa-test-key-12345" in explicit
+# development/testing environments (LSA_ENV in dev/test or under pytest runner).
+# Never seed an insecure default key in production or unconfigured environments.
+_EXPLICIT_KEY = os.environ.get("LSA_API_KEY")
+_IS_DEV_OR_TEST = (
+    os.environ.get("LSA_ENV", "").lower() in ("development", "dev", "test", "testing")
+    or "PYTEST_CURRENT_TEST" in os.environ
+)
+
+if _EXPLICIT_KEY:
+    _STORE.create_api_key(organization_name="default", raw_key=_EXPLICIT_KEY)
+elif _IS_DEV_OR_TEST:
+    _STORE.create_api_key(organization_name="default", raw_key="lsa-test-key-12345")
 
 
 class AuthContext:
@@ -540,7 +551,8 @@ def evaluate_incident(req: EvaluateIncidentRequest) -> EvaluateIncidentResponse:
     from lsa.drift.mutation_rules import MutationComparator, SessionScope
     from lsa.drift.intent_fingerprint import extract_fingerprint
 
-    scope = SessionScope(task_text=req.task_text)
+    fp = extract_fingerprint(req.task_text)
+    scope = SessionScope(task_text=req.task_text, known_paths=fp.authorized_paths)
     event = ObservedEvent(
         function="audit:interactive",
         event_type="mutation",
@@ -549,7 +561,6 @@ def evaluate_incident(req: EvaluateIncidentRequest) -> EvaluateIncidentResponse:
     )
     comparator = MutationComparator()
     alerts = comparator.compare(scope, [event])
-    fp = extract_fingerprint(req.task_text)
 
     caught = len(alerts) > 0
     top_alert = alerts[0] if alerts else None

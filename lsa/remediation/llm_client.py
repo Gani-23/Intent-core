@@ -336,9 +336,15 @@ def build_remediation_client(settings: object) -> RemediationClient:
     fallback_client = RuleBasedLLMClient()
     if status.provider == "rule-based" or not status.available:
         return fallback_client
+
+    # Resolve preferred provider: support preferred_provider, remediation_provider, or env
+    preferred = getattr(settings, "preferred_provider", None) or getattr(settings, "remediation_provider", None)
+    if preferred in ("failsafe", "auto"):
+        preferred = None
+
     if status.provider in ("failsafe", "auto"):
         return FailsafeRemediationClient(
-            preferred_provider=getattr(settings, "preferred_provider", None),
+            preferred_provider=preferred,
             timeout_seconds=float(getattr(settings, "remediation_timeout_seconds", 20.0)),
             fallback_client=fallback_client,
         )
