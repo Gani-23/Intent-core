@@ -1,2 +1,0 @@
-event=network function=charge_customer process=python target=https://api.stripe.com/v1/charges
-event=network function=charge_customer process=python target=https://malicious.example.com/exfil

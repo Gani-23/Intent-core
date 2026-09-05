@@ -1,3 +1,0 @@
-event=network process=python comm=python module=app function_name=charge_customer request_id=req-f70facf6c2fe-safe-payment traceparent=00-578634bc30b947a3a352d8449b273fe1-66f6463d13774106-01 target=https://api.stripe.com/v1/charges
-event=network process=python comm=python module=app function_name=sync_ledger request_id=req-f70facf6c2fe-safe-payment traceparent=00-578634bc30b947a3a352d8449b273fe1-c67eb5c2f95542ab-01 target=https://ledger.internal/v1/entries
-event=network process=python comm=python module=app function_name=notify_customer request_id=req-f70facf6c2fe-safe-payment traceparent=00-578634bc30b947a3a352d8449b273fe1-86587bae4de24008-01 target=https://api.mailgun.net/v3/messages

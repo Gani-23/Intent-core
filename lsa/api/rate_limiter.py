@@ -7,8 +7,18 @@ import time
 from collections import defaultdict
 
 
-class TokenBucketRateLimiter:
-    """Sliding window per-key rate limiter."""
+class SlidingWindowRateLimiter:
+    """Sliding window per-key rate limiter using in-memory timestamp logs.
+
+    WARNING:
+        This rate limiter stores timestamp histories strictly in-process memory.
+        In a multi-replica or multi-worker deployment (such as multiple uvicorn
+        worker processes or containers behind a round-robin load balancer), each
+        process maintains an independent sliding window. This effectively multiplies
+        the permitted request volume across the deployment. For strict rate limiting
+        across distributed clusters, replace or back this limiter with a shared distributed
+        store (e.g. Redis sliding window / token bucket).
+    """
 
     def __init__(self, requests_per_minute: int | None = None) -> None:
         if requests_per_minute is None:
@@ -46,8 +56,11 @@ class TokenBucketRateLimiter:
             self._history.clear()
 
 
-_GLOBAL_RATE_LIMITER = TokenBucketRateLimiter()
+# Backward compatibility alias
+TokenBucketRateLimiter = SlidingWindowRateLimiter
+
+_GLOBAL_RATE_LIMITER = SlidingWindowRateLimiter()
 
 
-def get_rate_limiter() -> TokenBucketRateLimiter:
+def get_rate_limiter() -> SlidingWindowRateLimiter:
     return _GLOBAL_RATE_LIMITER
