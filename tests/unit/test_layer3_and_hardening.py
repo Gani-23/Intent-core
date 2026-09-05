@@ -20,6 +20,14 @@ import lsa.drift.syscall_bridge as sb
 
 class Layer3AndHardeningTests(unittest.TestCase):
 
+    def setUp(self) -> None:
+        from lsa.api.rate_limiter import get_rate_limiter
+        get_rate_limiter().clear()
+
+    def tearDown(self) -> None:
+        from lsa.api.rate_limiter import get_rate_limiter
+        get_rate_limiter().clear()
+
     def test_pr_comment_formatting(self) -> None:
         clean_comment = format_pr_comment([])
         self.assertIn(REPORT_MARKER, clean_comment)
