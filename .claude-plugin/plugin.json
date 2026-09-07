@@ -5,6 +5,5 @@
   "description": "Runtime semantic drift auditor for AI coding agent sessions",
   "author": {
     "name": "gani-23"
-  },
-  "hooks": "./hooks/hooks.json"
+  }
 }
