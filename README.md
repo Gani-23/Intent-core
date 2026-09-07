@@ -97,7 +97,52 @@ To install as a Claude Code plugin, point `CLAUDE_PLUGIN_ROOT` at this directory
 2. **Enterprise Strict Mode (Fail-Closed Option)**:
    - `INTENT_GUARD_MODE=strict`: Enables `PreToolUse` blocking for high-risk destructive actions (`rm -rf /`, `DROP TABLE`, force pushes, etc.) and enforces scope manifest integrity.
    - `INTENT_GUARD_FAIL_CLOSED=true`: Configures the pre-tool gate to **fail closed**. If scope signatures are missing, keys cannot be read, or verification errors occur, the tool execution is halted. This is recommended for regulated enterprise and CI environments.
-   - `INTENT_GUARD_RETAIN_EVENTS=true`: Retains raw session traces, scopes, and verification signatures in `.intent-guard/archive/` instead of deleting them at session end, meeting SOC2/compliance audit trail requirements.
+    - `INTENT_GUARD_RETAIN_EVENTS=true`: Retains raw session traces, scopes, and verification signatures in `.intent-guard/archive/` instead of deleting them at session end, meeting SOC2/compliance audit trail requirements.
+
+## GitHub Actions & PR Auditor (Marketplace)
+
+`intent-guard` includes a standalone GitHub Action (`action.yml`) that reads generated session reports and automatically posts/updates an idempotent audit report directly onto GitHub Pull Requests.
+
+### Quickstart Workflow
+
+Add `.github/workflows/intent-guard.yml` to your repository:
+
+```yaml
+name: "Intent Guard PR Audit"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Audit & Comment on PR
+        uses: Gani-23/Intent-core@main # or release tag e.g. @v0.1.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          report_dir: ".intent-guard/reports"
+```
+
+### Action Inputs
+
+| Input | Description | Required | Default |
+| :--- | :--- | :--- | :--- |
+| `github_token` | `secrets.GITHUB_TOKEN` for posting PR comments | **Yes** | N/A |
+| `pr_number` | PR number (auto-detected from event context if omitted) | No | `github.event.pull_request.number` |
+| `report_dir` | Directory containing session report markdown files | No | `.intent-guard/reports` |
+| `api_url` | Optional LSA central API URL for remote organization telemetry | No | `""` |
+| `api_key` | Optional LSA API Key | No | `""` |
+
+For advanced CI setups (running Claude Code headlessly in CI, blocking merges on critical drift, and compliance archiving), see the full guide in [docs/github-actions.md](docs/github-actions.md) and workflow templates in [examples/github-actions/](examples/github-actions/).
 
 ## License
 

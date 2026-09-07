@@ -1,0 +1,25 @@
+name: "Intent Guard PR Audit Commenter"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  intent-guard-audit:
+    name: Post Intent Drift Audit to PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Reads .intent-guard/reports/ generated during CI or agent execution,
+      # and posts or updates an idempotent audit comment directly on the PR.
+      - name: Audit & Comment on PR
+        uses: Gani-23/Intent-core@main # or specific release tag e.g. @v0.1.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          report_dir: ".intent-guard/reports"
