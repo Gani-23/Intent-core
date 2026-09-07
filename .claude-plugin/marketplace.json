@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "intent-guard-marketplace",
+  "description": "Intent Guard marketplace for runtime AI agent semantic drift auditing",
+  "owner": {
+    "name": "gani-23"
+  },
+  "plugins": [
+    {
+      "name": "intent-guard",
+      "description": "Runtime semantic drift auditor for AI coding agent sessions",
+      "version": "0.1.0",
+      "source": "./"
+    }
+  ]
+}
