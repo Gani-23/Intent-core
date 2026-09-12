@@ -31,6 +31,10 @@ inputs:
     description: "Name of the uploaded artifact in the GitHub Actions run summary"
     required: false
     default: "intent-guard-audit-reports"
+  auto_audit_pr:
+    description: "Whether to dynamically audit PR git changes against PR title/body if no pre-existing session reports are found"
+    required: false
+    default: "true"
 
 outputs:
   findings_count:
@@ -52,6 +56,8 @@ runs:
         REPORT_DIR: ${{ inputs.report_dir }}
         LSA_API_URL: ${{ inputs.api_url }}
         LSA_API_KEY: ${{ inputs.api_key }}
+        AUTO_AUDIT_PR: ${{ inputs.auto_audit_pr }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
         python3 "${{ github.action_path }}/action/pr_commenter.py"
 
