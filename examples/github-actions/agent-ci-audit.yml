@@ -1,0 +1,79 @@
+name: "Autonomous Agent CI & Intent Guard Audit"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  agent-execution-and-audit:
+    name: Run Agent Session & Audit Drift
+    # Only run on PRs or when someone comments "/run-agent" on a PR
+    if: >
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/run-agent'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Set up Node.js (for Claude Code CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Claude Code & Intent Guard Plugin
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          # Install intent-guard dependencies
+          pip install -e ".[api]"
+
+      - name: Run Claude Code Agent with Intent Guard
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Intent Guard posture: strict will block destructive commands (rm -rf, drop table)
+          INTENT_GUARD_MODE: "strict"
+          INTENT_GUARD_FAIL_CLOSED: "true"
+          # Instruct Claude Code to load the local intent-guard plugin
+          CLAUDE_PLUGIN_ROOT: ${{ github.workspace }}
+        run: |
+          echo "Executing agent task under Intent Guard observation..."
+          # Example headless invocation:
+          # claude --print "Review this PR diff and add unit tests for uncovered edge cases" || true
+
+      - name: Post Intent Guard Audit Report to PR
+        uses: Gani-23/Intent-core@main
+        with:
+          github_token: ${{ secrets.GH_TOKEN || github.token }}
+          report_dir: ".intent-guard/reports"
+
+      - name: Enforcement Quality Gate (Fail on Critical Drift)
+        run: |
+          python3 -c "
+          from pathlib import Path
+          report_dir = Path('.intent-guard/reports')
+          critical_count = 0
+          if report_dir.exists():
+              for f in report_dir.glob('*.md'):
+                  content = f.read_text()
+                  if 'CRITICAL' in content or 'destructive' in content.lower():
+                      critical_count += 1
+          if critical_count > 0:
+              print(f'❌ Quality Gate Failed: {critical_count} critical drift/destructive finding(s) detected!')
+              exit(1)
+          print('✅ Quality Gate Passed: No critical drift detected.')
+          "

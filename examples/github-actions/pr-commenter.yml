@@ -1,0 +1,25 @@
+name: "Intent Guard PR Audit Commenter"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  intent-guard-audit:
+    name: Post Intent Drift Audit to PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # github.token is automatically provided by GitHub Actions (no secret setup needed).
+      # Note: Do not try to create a secret named GITHUB_TOKEN in repo settings; GitHub automatically injects it!
+      - name: Audit & Comment on PR
+        uses: Gani-23/Intent-core@main # or specific release tag e.g. @v0.1.0
+        with:
+          github_token: ${{ secrets.GH_TOKEN || github.token }}
+          report_dir: ".intent-guard/reports"

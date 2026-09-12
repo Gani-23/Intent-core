@@ -1,14 +1,59 @@
-# intent-guard
+# 🛡️ Intent Guard
 
-A Claude Code plugin that checks whether what an agent actually *did* in a
-session matches what you actually *asked* it to do — and flags the gap
-before it becomes an incident.
+> **Runtime Semantic Drift Auditor & PR Safety Gate for AI Coding Agents**
 
-Built from the detection engine in [intent-core/LSA](https://github.com/Gani-23/Intent-core):
-`lsa/core`, `lsa/ingest`, `lsa/drift`, `lsa/remediation` are copied over
-close to as-is. Everything in `hooks/` and `lsa/drift/mutation_rules.py` is
-new, built to plug that engine into Claude Code's hook system instead of
-eBPF network tracing.
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-96%20passed-brightgreen.svg)](tests/)
+[![Dependencies](https://img.shields.io/badge/dependencies-zero%20external%20pip-success.svg)](action.yml)
+[![Marketplace](https://img.shields.io/badge/marketplace-GitHub%20Actions-blueviolet.svg)](action.yml)
+
+**Intent Guard** monitors AI coding assistants (such as Claude Code, Cursor, Copilot workspaces, or automated PR bots) to verify that what an agent actually *did* in a session matches what you actually *asked* it to do — catching unauthorized mutations, destructive commands, and semantic drift before they become production incidents.
+
+---
+
+## ⚡ Quick Start (2-Minute Setup)
+
+### Option 1: GitHub Actions (Pull Request Auditor)
+
+Add `.github/workflows/intent-guard.yml` to your repo:
+
+```yaml
+name: "Intent Guard PR Audit"
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Gani-23/Intent-core@main
+        with:
+          github_token: ${{ secrets.GH_TOKEN || github.token }}
+```
+
+> **Token Tip**: You can pass a custom Personal Access Token named `GH_TOKEN` (`${{ secrets.GH_TOKEN }}` in repository secrets), or omit it to automatically use the built-in `${{ github.token }}`.
+
+Whenever a Pull Request is opened, Intent Guard automatically posts and idempotently updates a clean audit report directly on the PR conversation thread.
+
+### Option 2: Claude Code CLI Plugin (Local Development)
+
+```bash
+# 1. Point Claude Code to the plugin directory
+export CLAUDE_PLUGIN_ROOT="$(pwd)"
+
+# 2. Run Claude Code normally — Intent Guard automatically audits prompts & tools
+claude "Refactor auth middleware in src/auth.py without touching database models"
+```
+
+👉 **Need a step-by-step walkthrough?** Check out the comprehensive **[User Guide & Manual (docs/USER_GUIDE.md)](docs/USER_GUIDE.md)** or the **[GitHub Actions Integration Guide (docs/github-actions.md)](docs/github-actions.md)**.
+
+---
 
 ## Why this exists
 
@@ -97,7 +142,52 @@ To install as a Claude Code plugin, point `CLAUDE_PLUGIN_ROOT` at this directory
 2. **Enterprise Strict Mode (Fail-Closed Option)**:
    - `INTENT_GUARD_MODE=strict`: Enables `PreToolUse` blocking for high-risk destructive actions (`rm -rf /`, `DROP TABLE`, force pushes, etc.) and enforces scope manifest integrity.
    - `INTENT_GUARD_FAIL_CLOSED=true`: Configures the pre-tool gate to **fail closed**. If scope signatures are missing, keys cannot be read, or verification errors occur, the tool execution is halted. This is recommended for regulated enterprise and CI environments.
-   - `INTENT_GUARD_RETAIN_EVENTS=true`: Retains raw session traces, scopes, and verification signatures in `.intent-guard/archive/` instead of deleting them at session end, meeting SOC2/compliance audit trail requirements.
+    - `INTENT_GUARD_RETAIN_EVENTS=true`: Retains raw session traces, scopes, and verification signatures in `.intent-guard/archive/` instead of deleting them at session end, meeting SOC2/compliance audit trail requirements.
+
+## GitHub Actions & PR Auditor (Marketplace)
+
+`intent-guard` includes a standalone GitHub Action (`action.yml`) that reads generated session reports and automatically posts/updates an idempotent audit report directly onto GitHub Pull Requests.
+
+### Quickstart Workflow
+
+Add `.github/workflows/intent-guard.yml` to your repository:
+
+```yaml
+name: "Intent Guard PR Audit"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Audit & Comment on PR
+        uses: Gani-23/Intent-core@main # or release tag e.g. @v0.1.0
+        with:
+          github_token: ${{ secrets.GH_TOKEN || github.token }}
+          report_dir: ".intent-guard/reports"
+```
+
+### Action Inputs
+
+| Input | Description | Required | Default |
+| :--- | :--- | :--- | :--- |
+| `github_token` | Personal access token (`${{ secrets.GH_TOKEN }}`) or built-in token (`${{ github.token }}`). | No | `${{ github.token }}` |
+| `pr_number` | PR number (auto-detected from event context if omitted) | No | `github.event.pull_request.number` |
+| `report_dir` | Directory containing session report markdown files | No | `.intent-guard/reports` |
+| `api_url` | Optional LSA central API URL for remote organization telemetry | No | `""` |
+| `api_key` | Optional LSA API Key | No | `""` |
+
+For advanced CI setups (running Claude Code headlessly in CI, blocking merges on critical drift, and compliance archiving), see the full guide in [docs/github-actions.md](docs/github-actions.md) and workflow templates in [examples/github-actions/](examples/github-actions/).
 
 ## License
 
