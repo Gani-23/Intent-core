@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon.png" alt="Intent Guard Logo" width="160" height="160" style="border-radius: 24px;" />
+</p>
+
 # 🛡️ Intent Guard
 
 > **Runtime Semantic Drift Auditor & PR Safety Gate for AI Coding Agents**
@@ -5,7 +9,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-96%20passed-brightgreen.svg)](tests/)
 [![Dependencies](https://img.shields.io/badge/dependencies-zero%20external%20pip-success.svg)](action.yml)
-[![Marketplace](https://img.shields.io/badge/marketplace-GitHub%20Actions-blueviolet.svg)](action.yml)
+[![Marketplace](https://img.shields.io/badge/marketplace-Intent%20Guard%20PR%20Auditor-blueviolet.svg)](https://github.com/marketplace/actions/intent-guard-pr-auditor)
 
 **Intent Guard** monitors AI coding assistants (such as Claude Code, Cursor, Copilot workspaces, or automated PR bots) to verify that what an agent actually *did* in a session matches what you actually *asked* it to do — catching unauthorized mutations, destructive commands, and semantic drift before they become production incidents.
 
