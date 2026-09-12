@@ -286,42 +286,20 @@ def dynamic_pr_audit(
     check_ran = False
 
     try:
-        from lsa.drift.mutation_rules import MutationComparator, SessionScope
-        from lsa.drift.models import ObservedEvent
+        from lsa.drift.diff_audit import StaticDiffAuditor
         check_ran = True
     except ImportError as e:
         check_ran = False
-        sys.stderr.write(f"Warning: Failed to import MutationComparator: {e}\n")
+        sys.stderr.write(f"Warning: Failed to import StaticDiffAuditor: {e}\n")
 
     if check_ran:
-        # Extract declared paths from task description
-        extracted_paths = re.findall(r"[\w./-]+\.[a-zA-Z0-9]+", task_description)
-        scope = SessionScope(
-            task_text=task_description,
-            known_paths=extracted_paths,
-        )
-
-        observed_events: list[ObservedEvent] = []
-        for file_info in files:
-            fname = file_info["filename"]
-            patch = file_info.get("patch", "")
-            status = file_info.get("status", "modified")
-            observed_events.append(
-                ObservedEvent(
-                    function=f"git.{status}",
-                    event_type="mutation",
-                    target=fname,
-                    metadata={"command": patch[:200], "status": status},
-                )
-            )
-
-        comparator = MutationComparator()
-        computed_alerts = comparator.compare(scope, observed_events)
-        for a in computed_alerts:
+        auditor = StaticDiffAuditor()
+        findings = auditor.audit_pr(title, body, files)
+        for finding in findings:
             alerts.append({
-                "target": a.observed_target,
-                "severity": a.severity,
-                "reason": a.reason,
+                "target": finding.target,
+                "severity": finding.severity,
+                "reason": finding.reason,
             })
 
     # Generate genuine session report markdown

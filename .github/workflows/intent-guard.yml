@@ -19,6 +19,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Verify no tracked files under .intent-guard/
+        run: |
+          TRACKED=$(git ls-files .intent-guard/)
+          if [ -n "$TRACKED" ]; then
+            echo "Error: Found tracked files under .intent-guard/: $TRACKED"
+            exit 1
+          fi
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:

@@ -88,7 +88,7 @@ class Layer3AndHardeningTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             rep_dir = Path(td)
             files = [{"filename": "secret_production.env", "status": "modified", "patch": "+SECRET=123"}]
-            with patch.dict(sys.modules, {"lsa.drift.mutation_rules": None}):
+            with patch.dict(sys.modules, {"lsa.drift.diff_audit": None}):
                 report_path = dynamic_pr_audit("org/repo", 99, "benign title", "benign body", files, rep_dir)
                 self.assertIsNotNone(report_path)
                 content = report_path.read_text(encoding="utf-8")
@@ -125,6 +125,79 @@ class Layer3AndHardeningTests(unittest.TestCase):
             content_drift = p_drift.read_text(encoding="utf-8")
             self.assertIn(".env.local", content_drift)
             self.assertNotIn("Clean Pass", content_drift)
+
+    def test_dynamic_pr_audit_doc_comment_false_positive_prevention(self) -> None:
+        """Regression test 1: documentation comment in code describing dangerous patterns must NOT be flagged."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            rep_dir = Path(td)
+            doc_diff = [
+                {
+                    "filename": "lsa/drift/mutation_rules.py",
+                    "status": "modified",
+                    "patch": (
+                        "@@ -95,3 +95,5 @@\n"
+                        "+    # Example: rm -rf / or filesystem-wide delete matches this pattern\n"
+                        "+    # Maintainers document security rules with spaces like rm -rf $GITHUB_WORKSPACE\n"
+                    ),
+                }
+            ]
+            report_path = dynamic_pr_audit(
+                "org/repo",
+                103,
+                "docs: clarify mutation rules regex",
+                "Documenting regex patterns in lsa/drift/mutation_rules.py",
+                doc_diff,
+                rep_dir,
+            )
+            content = report_path.read_text(encoding="utf-8")
+            self.assertIn("✅ **Clean Pass**", content)
+            self.assertNotIn("destructive pattern", content)
+            self.assertNotIn("[HIGH]", content)
+            self.assertNotIn("[CRITICAL]", content)
+
+    def test_dynamic_pr_audit_executable_surface_destructive_command_detected(self) -> None:
+        """Regression test 2: real destructive command added to executable surface (e.g. CI workflow) MUST be flagged."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            rep_dir = Path(td)
+            malicious_workflow = [
+                {
+                    "filename": ".github/workflows/deploy.yml",
+                    "status": "modified",
+                    "patch": (
+                        "@@ -20,3 +20,5 @@\n"
+                        "+    - name: Cleanup workspace\n"
+                        "+      run: rm -rf $GITHUB_WORKSPACE\n"
+                    ),
+                }
+            ]
+            report_path = dynamic_pr_audit(
+                "org/repo",
+                104,
+                "ci: add deploy step",
+                "Updating deployment workflow",
+                malicious_workflow,
+                rep_dir,
+            )
+            content = report_path.read_text(encoding="utf-8")
+            self.assertIn("[CRITICAL]", content)
+            self.assertIn("destructive command", content)
+            self.assertIn("workspace-wide delete", content)
+            self.assertNotIn("Clean Pass", content)
+
+    def test_no_tracked_files_under_intent_guard_directory(self) -> None:
+        """Enforce that no files under .intent-guard/ are tracked in git index."""
+        import subprocess
+
+        res = subprocess.run(["git", "ls-files", ".intent-guard/"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+        tracked = res.stdout.strip()
+        self.assertEqual(tracked, "", f"Found tracked files under .intent-guard/: {tracked}")
 
     def test_resolve_pr_number_from_env_and_event_payload(self) -> None:
         import tempfile
