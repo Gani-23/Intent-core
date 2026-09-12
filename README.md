@@ -1,14 +1,57 @@
-# intent-guard
+# 🛡️ Intent Guard
 
-A Claude Code plugin that checks whether what an agent actually *did* in a
-session matches what you actually *asked* it to do — and flags the gap
-before it becomes an incident.
+> **Runtime Semantic Drift Auditor & PR Safety Gate for AI Coding Agents**
 
-Built from the detection engine in [intent-core/LSA](https://github.com/Gani-23/Intent-core):
-`lsa/core`, `lsa/ingest`, `lsa/drift`, `lsa/remediation` are copied over
-close to as-is. Everything in `hooks/` and `lsa/drift/mutation_rules.py` is
-new, built to plug that engine into Claude Code's hook system instead of
-eBPF network tracing.
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-96%20passed-brightgreen.svg)](tests/)
+[![Dependencies](https://img.shields.io/badge/dependencies-zero%20external%20pip-success.svg)](action.yml)
+[![Marketplace](https://img.shields.io/badge/marketplace-GitHub%20Actions-blueviolet.svg)](action.yml)
+
+**Intent Guard** monitors AI coding assistants (such as Claude Code, Cursor, Copilot workspaces, or automated PR bots) to verify that what an agent actually *did* in a session matches what you actually *asked* it to do — catching unauthorized mutations, destructive commands, and semantic drift before they become production incidents.
+
+---
+
+## ⚡ Quick Start (2-Minute Setup)
+
+### Option 1: GitHub Actions (Pull Request Auditor)
+
+Add `.github/workflows/intent-guard.yml` to your repo:
+
+```yaml
+name: "Intent Guard PR Audit"
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Gani-23/Intent-core@main
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+Whenever a Pull Request is opened, Intent Guard automatically posts and idempotently updates a clean audit report directly on the PR conversation thread.
+
+### Option 2: Claude Code CLI Plugin (Local Development)
+
+```bash
+# 1. Point Claude Code to the plugin directory
+export CLAUDE_PLUGIN_ROOT="$(pwd)"
+
+# 2. Run Claude Code normally — Intent Guard automatically audits prompts & tools
+claude "Refactor auth middleware in src/auth.py without touching database models"
+```
+
+👉 **Need a step-by-step walkthrough?** Check out the comprehensive **[User Guide & Manual (docs/USER_GUIDE.md)](docs/USER_GUIDE.md)** or the **[GitHub Actions Integration Guide (docs/github-actions.md)](docs/github-actions.md)**.
+
+---
 
 ## Why this exists
 
