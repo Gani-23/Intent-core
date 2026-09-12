@@ -266,13 +266,13 @@ def dynamic_pr_audit(
     alerts: list[dict[str, str]] = []
     try:
         from lsa.drift.mutation_rules import MutationComparator, SessionScope
-        from lsa.drift.intent_fingerprint import extract_fingerprint
         from lsa.drift.models import ObservedEvent
 
-        fp = extract_fingerprint(task_description)
+        # Extract declared paths from task description
+        extracted_paths = re.findall(r"[\w./-]+\.[a-zA-Z0-9]+", task_description)
         scope = SessionScope(
             task_text=task_description,
-            known_paths=list(fp.target_files or []),
+            known_paths=extracted_paths,
         )
 
         observed_events: list[ObservedEvent] = []
@@ -282,10 +282,8 @@ def dynamic_pr_audit(
             status = file_info.get("status", "modified")
             observed_events.append(
                 ObservedEvent(
-                    session_id=f"pr-{pr_number}",
-                    timestamp="0",
-                    event_type="mutation",
                     function=f"git.{status}",
+                    event_type="mutation",
                     target=fname,
                     metadata={"command": patch[:200], "status": status},
                 )
