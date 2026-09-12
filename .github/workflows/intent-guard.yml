@@ -1,0 +1,32 @@
+name: "Intent Guard PR Auditor"
+
+on:
+  pull_request:
+    branches: [ main, intent-guard ]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [ main, intent-guard ]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  intent-guard-audit:
+    name: Audit & Comment on PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Runs the action definition located in the root of this repository (action.yml)
+      - name: Run Intent Guard Action
+        uses: ./
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          report_dir: ".intent-guard/reports"
