@@ -23,11 +23,28 @@ inputs:
   api_key:
     description: "Optional LSA API Key"
     required: false
+  upload_artifact:
+    description: "Whether to upload the session reports as a downloadable GitHub Actions build artifact"
+    required: false
+    default: "true"
+  artifact_name:
+    description: "Name of the uploaded artifact in the GitHub Actions run summary"
+    required: false
+    default: "intent-guard-audit-reports"
+
+outputs:
+  findings_count:
+    description: "Total number of drift findings detected across all session reports"
+    value: ${{ steps.commenter.outputs.findings_count }}
+  reports_found:
+    description: "Number of session report files evaluated"
+    value: ${{ steps.commenter.outputs.reports_found }}
 
 runs:
   using: "composite"
   steps:
     - name: Run Intent Guard PR Commenter
+      id: commenter
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github_token }}
@@ -37,3 +54,11 @@ runs:
         LSA_API_KEY: ${{ inputs.api_key }}
       run: |
         python3 "${{ github.action_path }}/action/pr_commenter.py"
+
+    - name: Upload Intent Guard Audit Reports Artifact
+      if: ${{ inputs.upload_artifact == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact_name }}
+        path: ${{ inputs.report_dir }}
+        if-no-files-found: ignore

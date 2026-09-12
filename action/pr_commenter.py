@@ -195,12 +195,32 @@ def main() -> int:
     report_dir = Path(os.environ.get("REPORT_DIR", ".intent-guard/reports"))
     reports = collect_local_reports(report_dir)
     comment = format_pr_comment(reports)
+    total_findings = sum(r.get("findings_count", 1) for r in reports) if reports else 0
+
+    # 1. Always append report to GitHub Actions Job Step Summary
+    step_summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if step_summary_path:
+        try:
+            with open(step_summary_path, "a", encoding="utf-8") as f:
+                f.write(f"\n{comment}\n")
+        except Exception as e:
+            sys.stderr.write(f"Warning: Failed to write to GITHUB_STEP_SUMMARY: {e}\n")
+
+    # 2. Set action output parameters
+    github_output_path = os.environ.get("GITHUB_OUTPUT")
+    if github_output_path:
+        try:
+            with open(github_output_path, "a", encoding="utf-8") as f:
+                f.write(f"findings_count={total_findings}\n")
+                f.write(f"reports_found={len(reports)}\n")
+        except Exception as e:
+            sys.stderr.write(f"Warning: Failed to write to GITHUB_OUTPUT: {e}\n")
 
     token = os.environ.get("GITHUB_TOKEN")
     repo = os.environ.get("GITHUB_REPOSITORY")
     pr_num = resolve_pr_number()
 
-    # If running in GitHub Actions with PR context
+    # 3. If running in GitHub Actions with PR context, post/update PR sticky comment
     if token and repo and pr_num is not None:
         try:
             action, cid = post_or_update_pr_comment(repo, pr_num, token, comment)
