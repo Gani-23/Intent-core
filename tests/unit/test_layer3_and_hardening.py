@@ -10,6 +10,8 @@ from action.pr_commenter import (
     post_or_update_pr_comment,
     resolve_pr_number,
     sanitize_markdown_details,
+    collect_local_reports,
+    dynamic_pr_audit,
     REPORT_MARKER,
 )
 from lsa.api.rate_limiter import SlidingWindowRateLimiter, TokenBucketRateLimiter
@@ -57,6 +59,72 @@ class Layer3AndHardeningTests(unittest.TestCase):
             action, cid = post_or_update_pr_comment("org/repo", 1, "fake-token", "Updated text")
             self.assertEqual(action, "updated")
             self.assertEqual(cid, 42)
+
+    def test_post_or_update_pr_comment_never_logs_token_prefix(self) -> None:
+        import io
+        import sys
+
+        # Test both default mode and INTENT_GUARD_DEBUG=1 mode
+        for debug_val in ("", "1"):
+            stderr_capture = io.StringIO()
+            with patch("urllib.request.urlopen") as mock_url, \
+                 patch.dict(os.environ, {"INTENT_GUARD_DEBUG": debug_val}, clear=False), \
+                 patch("sys.stderr", stderr_capture):
+                mock_url.return_value.__enter__.return_value.read.side_effect = [
+                    b"[]",
+                    b'{"id": 42, "html_url": "https://github.com/org/repo/pull/1#issuecomment-42"}',
+                ]
+                post_or_update_pr_comment("org/repo", 1, "ghp_SECRET_TOKEN_VALUE", "Body text")
+                logged = stderr_capture.getvalue()
+                self.assertNotIn("prefix=", logged)
+                self.assertNotIn("ghp_", logged)
+                self.assertNotIn("SECRET", logged)
+
+    def test_dynamic_pr_audit_when_engine_fails_to_load_reports_audit_not_performed(self) -> None:
+        import sys
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            rep_dir = Path(td)
+            files = [{"filename": "secret_production.env", "status": "modified", "patch": "+SECRET=123"}]
+            with patch.dict(sys.modules, {"lsa.drift.mutation_rules": None}):
+                report_path = dynamic_pr_audit("org/repo", 99, "benign title", "benign body", files, rep_dir)
+                self.assertIsNotNone(report_path)
+                content = report_path.read_text(encoding="utf-8")
+
+                # Must explicitly warn that audit was not performed
+                self.assertIn("⚠️ **Audit Not Performed**", content)
+                self.assertIn("the drift detection engine could not be loaded in this environment", content)
+                # Must NEVER claim Clean Pass when check failed to run
+                self.assertNotIn("Clean Pass", content)
+
+                # PR comment formatting must reflect audit not performed
+                collected = collect_local_reports(rep_dir)
+                comment = format_pr_comment(collected)
+                self.assertIn("⚠️ **audit not performed**", comment)
+                self.assertNotIn("clean pass", comment)
+
+    def test_dynamic_pr_audit_clean_pass_and_drift_detection(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as td:
+            rep_dir = Path(td)
+
+            # 1. Clean pass case: declared file matches mutation
+            files_clean = [{"filename": "src/app.py", "status": "modified", "patch": "+print('hello')"}]
+            p_clean = dynamic_pr_audit("org/repo", 101, "Update src/app.py", "Modify app logic in src/app.py", files_clean, rep_dir)
+            content_clean = p_clean.read_text(encoding="utf-8")
+            self.assertIn("✅ **Clean Pass**", content_clean)
+            self.assertNotIn("Audit Not Performed", content_clean)
+
+            # 2. Drift case: secret file touched without declaration
+            files_drift = [{"filename": ".env.local", "status": "added", "patch": "+KEY=val"}]
+            p_drift = dynamic_pr_audit("org/repo", 102, "Docs update", "Just updating docs", files_drift, rep_dir)
+            content_drift = p_drift.read_text(encoding="utf-8")
+            self.assertIn(".env.local", content_drift)
+            self.assertNotIn("Clean Pass", content_drift)
 
     def test_resolve_pr_number_from_env_and_event_payload(self) -> None:
         import tempfile

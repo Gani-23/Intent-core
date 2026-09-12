@@ -45,9 +45,25 @@ def format_pr_comment(reports_content: list[dict[str, str]]) -> str:
             f"✅ **No drift detected this session** — all observed tool executions aligned with declared intent.\n"
         )
 
-    total_findings = sum(r.get("findings_count", 1) for r in reports_content)
-    finding_str = f"**{total_findings} finding(s) detected**" if total_findings > 0 else "clean pass"
-    status_emoji = "⚠️" if total_findings > 0 else "✅"
+    has_unperformed = any(
+        r.get("audit_not_performed", False) or "Audit Not Performed" in r.get("content", "")
+        for r in reports_content
+    )
+    total_findings = sum(
+        r.get("findings_count") if r.get("findings_count") is not None
+        else sum(1 for line in r.get("content", "").splitlines() if line.strip().startswith("- **["))
+        for r in reports_content
+    )
+
+    if has_unperformed:
+        status_emoji = "⚠️"
+        finding_str = "**audit not performed** — drift detection engine could not be loaded"
+    elif total_findings > 0:
+        status_emoji = "⚠️"
+        finding_str = f"**{total_findings} finding(s) detected**"
+    else:
+        status_emoji = "✅"
+        finding_str = "clean pass"
 
     body = [
         f"{REPORT_MARKER}",
@@ -80,9 +96,11 @@ def collect_local_reports(report_dir_path: Path) -> list[dict[str, str]]:
         text = md_file.read_text(encoding="utf-8")
         # Count findings lines starting with - **[
         findings_count = sum(1 for line in text.splitlines() if line.strip().startswith("- **["))
+        audit_not_performed = "Audit Not Performed" in text
         reports.append({
             "session_id": md_file.stem,
-            "findings_count": max(1, findings_count),
+            "findings_count": findings_count,
+            "audit_not_performed": audit_not_performed,
             "content": text,
         })
     return reports
@@ -104,7 +122,8 @@ def post_or_update_pr_comment(
     elif raw_token.startswith("token "):
         raw_token = raw_token[6:].strip()
 
-    sys.stderr.write(f"Debug: repo={repo}, pr={pr_number}, token_len={len(raw_token)}, prefix={raw_token[:4]}...\n")
+    if os.environ.get("INTENT_GUARD_DEBUG") == "1":
+        sys.stderr.write(f"Debug: repo={repo}, pr={pr_number}, token_len={len(raw_token)}\n")
 
     headers = {
         "Authorization": f"Bearer {raw_token}",
@@ -264,10 +283,17 @@ def dynamic_pr_audit(
         sys.path.insert(0, str(action_root))
 
     alerts: list[dict[str, str]] = []
+    check_ran = False
+
     try:
         from lsa.drift.mutation_rules import MutationComparator, SessionScope
         from lsa.drift.models import ObservedEvent
+        check_ran = True
+    except ImportError as e:
+        check_ran = False
+        sys.stderr.write(f"Warning: Failed to import MutationComparator: {e}\n")
 
+    if check_ran:
         # Extract declared paths from task description
         extracted_paths = re.findall(r"[\w./-]+\.[a-zA-Z0-9]+", task_description)
         scope = SessionScope(
@@ -297,8 +323,6 @@ def dynamic_pr_audit(
                 "severity": a.severity,
                 "reason": a.reason,
             })
-    except Exception as e:
-        sys.stderr.write(f"Warning: Failed to run full Python MutationComparator: {e}\n")
 
     # Generate genuine session report markdown
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -315,13 +339,19 @@ def dynamic_pr_audit(
         f"## Files Modified in Pull Request ({len(files)} files)",
     ]
     for f in files[:20]:
-        report_lines.append(f"- `{f['filename']}` ({f['status']})")
+        st = f.get("status", "modified")
+        report_lines.append(f"- `{f['filename']}` ({st})")
     if len(files) > 20:
         report_lines.append(f"- ... and {len(files) - 20} more files")
 
     report_lines.append("")
     report_lines.append("## Dynamic Audit Findings")
-    if alerts:
+    if not check_ran:
+        report_lines.append(
+            "⚠️ **Audit Not Performed**: the drift detection engine could not be loaded in this environment. "
+            "No conclusion can be drawn about this PR's alignment with its stated intent."
+        )
+    elif alerts:
         for alert in alerts:
             sev_badge = alert['severity'].upper()
             report_lines.append(f"- **[{sev_badge}]** `{alert['target']}`: {alert['reason']}")
