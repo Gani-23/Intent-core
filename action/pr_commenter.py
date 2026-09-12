@@ -97,8 +97,9 @@ def post_or_update_pr_comment(
     timeout: int = DEFAULT_HTTP_TIMEOUT,
 ) -> tuple[str, int]:
     """Idempotently post or update the PR comment matching REPORT_MARKER."""
+    auth_header = token if token.startswith(("Bearer ", "token ")) else f"token {token}"
     headers = {
-        "Authorization": f"Bearer {token}",
+        "Authorization": auth_header,
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "intent-guard-action/1.0",
         "Content-Type": "application/json",
