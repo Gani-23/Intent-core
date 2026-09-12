@@ -55,12 +55,12 @@ jobs:
       - name: Audit & Comment on PR
         uses: Gani-23/Intent-core@main # or release tag e.g. @v0.1.0
         with:
-          github_token: ${{ github.token }}
+          github_token: ${{ secrets.GH_TOKEN || github.token }}
           report_dir: ".intent-guard/reports"
 ```
 
 > [!TIP]
-> **No secret configuration required**: `${{ github.token }}` is a built-in variable automatically provided by GitHub Actions for every run. You do **not** need to create a secret in your repository settings (if you attempt to create a secret named `GITHUB_TOKEN`, GitHub will reject it with `"Secret names must not start with GITHUB_"`).
+> **Custom Secrets & `GH_TOKEN`**: If you want to configure your own Personal Access Token, create a repository secret named `GH_TOKEN` (`${{ secrets.GH_TOKEN }}`). (GitHub will reject names starting with `GITHUB_` because that prefix is reserved for built-in variables). Using `${{ secrets.GH_TOKEN || github.token }}` gives you the best of both worlds: it uses your custom `GH_TOKEN` if present, or automatically falls back to GitHub's built-in token!
 
 ### Step 2: How It Works on Pull Requests
 Whenever an agent (or human) opens a Pull Request or pushes new code:
@@ -199,7 +199,7 @@ Intent Guard's semantic review pass uses a resilient multi-provider cascade so y
 
 | Input | Required | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `github_token` | **Yes** | N/A | Automatically provided by GitHub (`${{ github.token }}`). Do **not** create a secret named `GITHUB_TOKEN`. |
+| `github_token` | No | `${{ github.token }}` | Custom Personal Access Token (`${{ secrets.GH_TOKEN }}`) or automatic built-in token (`${{ github.token }}`). |
 | `pr_number` | No | Auto-detected | PR number (defaults to `github.event.pull_request.number`). |
 | `report_dir` | No | `.intent-guard/reports` | Directory where markdown reports are stored. |
 | `api_url` | No | `""` | Optional central LSA API URL for team telemetry. |
@@ -210,7 +210,7 @@ Intent Guard's semantic review pass uses a resilient multi-provider cascade so y
 ## 6. Frequently Asked Questions (FAQ)
 
 #### Q: Why does GitHub say "Secret names must not start with GITHUB_"?
-**A:** Because `GITHUB_TOKEN` is an internal, built-in token provided automatically by GitHub Actions! GitHub reserves the `GITHUB_` prefix so users don't accidentally overwrite system variables. You **never** need to manually create a secret named `GITHUB_TOKEN` in Repository Settings. Just use `${{ github.token }}` in your workflow YAML, and GitHub handles it automatically.
+**A:** GitHub reserves the `GITHUB_` prefix for internal system variables (like the automatic `GITHUB_TOKEN`). If you want to add your own personal access token in repository secrets, name it **`GH_TOKEN`** (e.g. `${{ secrets.GH_TOKEN }}`). Alternatively, you can simply omit the secret and let GitHub Actions use the built-in `${{ github.token }}` automatically.
 
 #### Q: Does Intent Guard slow down my coding agent?
 **A:** No. Pass 1 (regex matching) takes less than 1 millisecond. Pass 2 (semantic review) runs once when the session ends (`Stop` hook) or inside your GitHub Actions CI runner.

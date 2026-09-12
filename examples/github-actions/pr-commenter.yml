@@ -21,5 +21,5 @@ jobs:
       - name: Audit & Comment on PR
         uses: Gani-23/Intent-core@main # or specific release tag e.g. @v0.1.0
         with:
-          github_token: ${{ github.token }}
+          github_token: ${{ secrets.GH_TOKEN || github.token }}
           report_dir: ".intent-guard/reports"

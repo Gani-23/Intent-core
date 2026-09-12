@@ -58,7 +58,7 @@ jobs:
       - name: Post Intent Guard Audit Report to PR
         uses: Gani-23/Intent-core@main
         with:
-          github_token: ${{ github.token }}
+          github_token: ${{ secrets.GH_TOKEN || github.token }}
           report_dir: ".intent-guard/reports"
 
       - name: Enforcement Quality Gate (Fail on Critical Drift)

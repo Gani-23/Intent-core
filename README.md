@@ -34,10 +34,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Gani-23/Intent-core@main
         with:
-          github_token: ${{ github.token }}
+          github_token: ${{ secrets.GH_TOKEN || github.token }}
 ```
 
-> **Note**: `${{ github.token }}` is automatically generated and provided by GitHub for every workflow run. You do **not** need to create any secrets in your repository settings.
+> **Token Tip**: You can pass a custom Personal Access Token named `GH_TOKEN` (`${{ secrets.GH_TOKEN }}` in repository secrets), or omit it to automatically use the built-in `${{ github.token }}`.
 
 Whenever a Pull Request is opened, Intent Guard automatically posts and idempotently updates a clean audit report directly on the PR conversation thread.
 
@@ -173,7 +173,7 @@ jobs:
       - name: Audit & Comment on PR
         uses: Gani-23/Intent-core@main # or release tag e.g. @v0.1.0
         with:
-          github_token: ${{ github.token }}
+          github_token: ${{ secrets.GH_TOKEN || github.token }}
           report_dir: ".intent-guard/reports"
 ```
 
@@ -181,7 +181,7 @@ jobs:
 
 | Input | Description | Required | Default |
 | :--- | :--- | :--- | :--- |
-| `github_token` | Automatically provided by GitHub (`${{ github.token }}`). Do **not** create a secret named `GITHUB_TOKEN`. | **Yes** | N/A |
+| `github_token` | Personal access token (`${{ secrets.GH_TOKEN }}`) or built-in token (`${{ github.token }}`). | No | `${{ github.token }}` |
 | `pr_number` | PR number (auto-detected from event context if omitted) | No | `github.event.pull_request.number` |
 | `report_dir` | Directory containing session report markdown files | No | `.intent-guard/reports` |
 | `api_url` | Optional LSA central API URL for remote organization telemetry | No | `""` |
