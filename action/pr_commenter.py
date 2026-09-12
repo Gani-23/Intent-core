@@ -97,8 +97,17 @@ def post_or_update_pr_comment(
     timeout: int = DEFAULT_HTTP_TIMEOUT,
 ) -> tuple[str, int]:
     """Idempotently post or update the PR comment matching REPORT_MARKER."""
+    # Normalize token
+    raw_token = token.strip()
+    if raw_token.startswith("Bearer "):
+        raw_token = raw_token[7:].strip()
+    elif raw_token.startswith("token "):
+        raw_token = raw_token[6:].strip()
+
+    sys.stderr.write(f"Debug: repo={repo}, pr={pr_number}, token_len={len(raw_token)}, prefix={raw_token[:4]}...\n")
+
     headers = {
-        "Authorization": f"Bearer {token}",
+        "Authorization": f"Bearer {raw_token}",
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "intent-guard-action/1.0",
         "Content-Type": "application/json",
