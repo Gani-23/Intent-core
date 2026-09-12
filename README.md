@@ -7,11 +7,13 @@
 > **Runtime Semantic Drift Auditor & PR Safety Gate for AI Coding Agents**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-96%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-102%20passed-brightgreen.svg)](tests/)
 [![Dependencies](https://img.shields.io/badge/dependencies-zero%20external%20pip-success.svg)](action.yml)
 [![Marketplace](https://img.shields.io/badge/marketplace-Intent%20Guard%20PR%20Auditor-blueviolet.svg)](https://github.com/marketplace/actions/intent-guard-pr-auditor)
 
-**Intent Guard** monitors AI coding assistants (such as Claude Code, Cursor, Copilot workspaces, or automated PR bots) to verify that what an agent actually *did* in a session matches what you actually *asked* it to do — catching unauthorized mutations, destructive commands, and semantic drift before they become production incidents.
+**Most agent-safety tools check who an AI coding agent is or what it's allowed to touch. This checks whether what it actually did still matches what you asked — which is the only thing that would have caught Replit deleting a production database during a code freeze.**
+
+Intent Guard runs as a lightweight GitHub Action on Pull Requests or as a local hook for AI coding agents (Claude Code, Cursor, Copilot workspaces, OpenCode). It verifies that an agent's proposed changes and tool executions strictly adhere to declared intent, catching unauthorized mutations, destructive commands, and semantic drift before they hit production.
 
 ---
 
