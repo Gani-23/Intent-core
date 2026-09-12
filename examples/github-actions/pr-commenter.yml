@@ -16,10 +16,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Reads .intent-guard/reports/ generated during CI or agent execution,
-      # and posts or updates an idempotent audit comment directly on the PR.
+      # github.token is automatically provided by GitHub Actions (no secret setup needed).
+      # Note: Do not try to create a secret named GITHUB_TOKEN in repo settings; GitHub automatically injects it!
       - name: Audit & Comment on PR
         uses: Gani-23/Intent-core@main # or specific release tag e.g. @v0.1.0
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ github.token }}
           report_dir: ".intent-guard/reports"

@@ -7,7 +7,7 @@ branding:
 
 inputs:
   github_token:
-    description: "GitHub token (e.g. secrets.GITHUB_TOKEN) for posting PR comments"
+    description: "GitHub token (use github.token or secrets.GITHUB_TOKEN) for posting PR comments"
     required: true
   pr_number:
     description: "Pull request number (defaults to github.event.pull_request.number)"

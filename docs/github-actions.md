@@ -68,7 +68,7 @@ jobs:
       - name: Run Intent Guard PR Auditor Action
         uses: Gani-23/Intent-core@main # or release tag e.g. @v0.1.0
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ github.token }}
           report_dir: ".intent-guard/reports"
 ```
 
@@ -130,7 +130,7 @@ jobs:
       - name: Post Drift Audit to PR
         uses: Gani-23/Intent-core@main
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ github.token }}
           report_dir: ".intent-guard/reports"
 ```
 
@@ -144,7 +144,7 @@ If you want the CI check to fail when an agent attempts unauthorized mutations (
       - name: Post Drift Audit to PR
         uses: Gani-23/Intent-core@main
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ github.token }}
           report_dir: ".intent-guard/reports"
 
       - name: Fail CI on Critical Drift Findings
@@ -175,7 +175,7 @@ If you want the CI check to fail when an agent attempts unauthorized mutations (
 
 | Input | Description | Required | Default |
 | :--- | :--- | :--- | :--- |
-| `github_token` | `secrets.GITHUB_TOKEN` or a personal access token for posting comments | **Yes** | N/A |
+| `github_token` | Automatically provided by GitHub (`${{ github.token }}`). Do **not** create a secret named `GITHUB_TOKEN`. | **Yes** | N/A |
 | `pr_number` | Pull request number to comment on (auto-detected from event JSON if omitted) | No | `github.event.pull_request.number` |
 | `report_dir` | Directory where session report markdown files are saved | No | `.intent-guard/reports` |
 | `api_url` | Central Living Systems Auditor telemetry API URL | No | `""` |

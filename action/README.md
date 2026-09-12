@@ -19,7 +19,7 @@ This action inspects execution drift reports generated during AI coding agent se
 
 | Input | Description | Required | Default |
 | :--- | :--- | :--- | :--- |
-| `github_token` | GitHub token for posting PR comments (`secrets.GITHUB_TOKEN`) | **Yes** | N/A |
+| `github_token` | Automatically provided by GitHub (`${{ github.token }}`). Do **not** create a secret named `GITHUB_TOKEN`. | **Yes** | N/A |
 | `pr_number` | Target PR number (auto-detected from event payload if omitted) | No | `github.event.pull_request.number` |
 | `report_dir` | Directory containing generated session report markdown files | No | `.intent-guard/reports` |
 | `api_url` | Optional LSA central API URL for remote organization telemetry | No | `""` |
@@ -52,7 +52,7 @@ jobs:
       - name: Post Intent Drift Report to PR
         uses: Gani-23/Intent-core@main # or release tag e.g. @v0.1.0
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ github.token }}
           report_dir: ".intent-guard/reports"
 ```
 

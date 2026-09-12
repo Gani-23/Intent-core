@@ -28,5 +28,5 @@ jobs:
       - name: Run Intent Guard Action
         uses: ./
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ github.token }}
           report_dir: ".intent-guard/reports"
