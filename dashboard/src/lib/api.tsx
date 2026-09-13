@@ -146,18 +146,19 @@ export function useApiConfig() {
 
 export function useBackendApi() {
   const { fetchJson, config } = useApiConfig();
-  const resolveExpectedBackend = async () => {
+  const resolveExpectedBackend = useCallback(async () => {
     const health = await fetchJson<HealthResponse>("/health");
     return health.database_backend || "sqlite";
-  };
+  }, [fetchJson]);
 
-  return {
-    config,
-    getHealth: () => fetchJson<HealthResponse>("/health"),
-    getSessionEvents: (sessionId: string) =>
-      fetchJson<SessionEventRecord[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/events`),
-    getRecentSessionEvents: (limit = 20) =>
-      fetchJson<SessionEventRecord[]>(`/api/v1/sessions/recent-events?limit=${limit}`),
+  return useMemo(
+    () => ({
+      config,
+      getHealth: () => fetchJson<HealthResponse>("/health"),
+      getSessionEvents: (sessionId: string) =>
+        fetchJson<SessionEventRecord[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/events`),
+      getRecentSessionEvents: (limit = 20) =>
+        fetchJson<SessionEventRecord[]>(`/api/v1/sessions/recent-events?limit=${limit}`),
     getReadiness: () =>
       fetchJson<ReadinessResponse>("/maintenance/control-plane-deployment-readiness"),
     getAnalytics: (days = 14) => fetchJson<AnalyticsResponse>(`/analytics/control-plane?days=${days}`),
@@ -434,5 +435,7 @@ export function useBackendApi() {
         method: "POST",
         body: JSON.stringify(data),
       }),
-  };
+    }),
+    [config, fetchJson, resolveExpectedBackend],
+  );
 }

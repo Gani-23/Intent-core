@@ -22,7 +22,7 @@ class SlidingWindowRateLimiter:
 
     def __init__(self, requests_per_minute: int | None = None) -> None:
         if requests_per_minute is None:
-            requests_per_minute = int(os.environ.get("LSA_RATE_LIMIT_PER_MINUTE", "60"))
+            requests_per_minute = int(os.environ.get("LSA_RATE_LIMIT_PER_MINUTE", "1200"))
         self.requests_per_minute = max(1, requests_per_minute)
         self._window_seconds = 60.0
         self._lock = threading.Lock()

@@ -41,7 +41,8 @@ export default function SessionEventsPage() {
 
   useEffect(() => {
     load();
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchSessionId]);
 
   const uniqueSessions = Array.from(new Set(events.map((e) => e.session_id)));
 
