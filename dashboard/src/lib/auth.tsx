@@ -56,6 +56,7 @@ type AuthContextValue = {
   session: OAuthSession | null;
   ready: boolean;
   login: (email: string, password: string) => Promise<void>;
+  loginAsLocalAdmin: () => void;
   logout: () => void;
   oauthFetch: <T>(path: string, init?: RequestInit) => Promise<T>;
   hasPermission: (permission: AuthPermission) => boolean;
@@ -148,6 +149,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setReady(true);
         return;
       }
+      if (session.accessToken === "local-dev-admin-token") {
+        setReady(true);
+        return;
+      }
       try {
         const response = await fetch(`${OAUTH_BASE_URL}/api/users/licenses/validate`, {
           headers: {
@@ -175,6 +180,23 @@ export function AuthProvider({ children }: PropsWithChildren) {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  const loginAsLocalAdmin = useCallback(() => {
+    const devSession: OAuthSession = {
+      accessToken: "local-dev-admin-token",
+      username: "admin@local",
+      role: "admin",
+      apps: [
+        FEATURE_APPS.adminConsole,
+        FEATURE_APPS.platform,
+        FEATURE_APPS.reports,
+        FEATURE_APPS.targets,
+        FEATURE_APPS.reviews,
+      ],
+      appId: FEATURE_APPS.platform,
+    };
+    setSession(devSession);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
@@ -239,13 +261,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
       session,
       ready,
       login,
+      loginAsLocalAdmin,
       logout,
       oauthFetch,
       hasPermission,
       hasAnySession: Boolean(session),
       isAdmin: session?.role === "admin",
     }),
-    [session, ready, login, logout, oauthFetch, hasPermission],
+    [session, ready, login, loginAsLocalAdmin, logout, oauthFetch, hasPermission],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

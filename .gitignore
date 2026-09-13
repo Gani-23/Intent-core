@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.local.example
+!.env.example
+!dashboard/.env.example
 
 .venv/
 __pycache__/
