@@ -57,8 +57,8 @@ export default function NavBar({ onOpenConfig }: Props) {
       <Link className="brand-mark" to="/">
         <span className="brand-dot" />
         <span>
-          Living Systems
-          <strong> Auditor</strong>
+          Intent
+          <strong> Guard</strong>
         </span>
       </Link>
       <nav className="nav-links">

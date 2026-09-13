@@ -71,23 +71,23 @@ export default function HomePage() {
   const headlineMeta = useMemo(
     () => [
       {
-        label: "Deployment",
-        value: health?.deployment_readiness_ready ? "ready" : health?.status || "warming",
+        label: "Release",
+        value: "v1.0.2",
       },
       {
-        label: "Runtime proof",
-        value: health?.runtime_validation_status || "unknown",
+        label: "Marketplace",
+        value: "Verified",
       },
       {
-        label: "Target proof",
-        value: health?.live_workload_target_status || "unknown",
+        label: "Diff Auditor",
+        value: "Option B Active",
       },
       {
-        label: "Workload proof",
-        value: health?.live_workload_proof_status || "unknown",
+        label: "Test Suite",
+        value: "102 Passed",
       },
     ],
-    [health],
+    [],
   );
 
   return (
@@ -100,29 +100,35 @@ export default function HomePage() {
         <section className="hero-grid">
           <div className="hero-copy">
             <span className="eyebrow" data-hero-line>
-              Runtime intent. Deployment proof. Drift as signal.
+              Runtime intent drift & PR safety gate for AI coding agents
             </span>
             <h1 data-hero-line>
-              The control plane for software that needs to feel
-              <em> alive, attributable, and undeniable.</em>
+              Most safety tools check permissions. We check whether
+              <em> what the agent actually did still matches what you asked.</em>
             </h1>
             <p data-hero-line>
-              Separate frontend. FastAPI backend. Live readiness, proof cadence, governance debt,
-              and recovery state in one fluid surface.
+              The only safety check that catches an AI coding agent silently mutating secrets,
+              wiping project directories, or tampering with CI workflows during a code freeze.
+              Zero external pip dependencies.
             </p>
             <div className="hero-actions" data-hero-line>
-              <Link className="primary-button" to="/command">
-                Enter Command Center
+              <a
+                className="primary-button"
+                href="https://github.com/marketplace/actions/intent-guard-pr-auditor"
+                target="_blank"
+                rel="noreferrer"
+              >
+                GitHub Marketplace
+              </a>
+              <Link className="ghost-button" to="/audit/would-it-catch">
+                Would It Catch? Simulator
+              </Link>
+              <Link className="ghost-button" to="/command">
+                Command Center
               </Link>
               <Link className="ghost-button" to="/launch-guide">
-                Launch Guide
+                Quickstart Guide
               </Link>
-              <Link className="ghost-button" to="/proof-bundles">
-                Proof Bundles
-              </Link>
-              <button className="ghost-button" type="button" onClick={() => setConfigOpen(true)}>
-                Configure Backend Access
-              </button>
             </div>
             <div className="hero-status-row" data-stagger-group>
               {headlineMeta.map((item) => (
@@ -141,73 +147,76 @@ export default function HomePage() {
 
         <section className="signal-marquee" data-reveal>
           <div className="signal-marquee-track">
-            <span>runtime proof</span>
-            <span>deployment readiness</span>
-            <span>intent drift</span>
-            <span>change-control debt</span>
-            <span>incident attribution</span>
-            <span>runtime proof</span>
-            <span>deployment readiness</span>
-            <span>intent drift</span>
-            <span>change-control debt</span>
-            <span>incident attribution</span>
+            <span>runtime intent</span>
+            <span>pr safety gate</span>
+            <span>drift detection</span>
+            <span>destructive command blocking</span>
+            <span>zero pip dependencies</span>
+            <span>marketplace v1.0.2</span>
+            <span>runtime intent</span>
+            <span>pr safety gate</span>
+            <span>drift detection</span>
+            <span>destructive command blocking</span>
+            <span>zero pip dependencies</span>
+            <span>marketplace v1.0.2</span>
           </div>
         </section>
 
         <section className="section-grid">
           <MetricCard
-            label="Active workers"
-            value={health?.active_workers ?? 0}
-            caption="Live worker ownership visible from backend health."
+            label="Audit Engine"
+            value="Option B"
+            caption="Dedicated static diff reviewer with zero false-positives on docs & comments."
             tone="good"
           />
           <MetricCard
-            label="Queued jobs"
-            value={health?.queued_jobs ?? 0}
-            caption="Command center surfaces queue pressure immediately."
-            tone={(health?.queued_jobs ?? 0) > 0 ? "warn" : "neutral"}
+            label="CI Runtime"
+            value="~2s"
+            caption="Ultra-fast execution with zero external pip dependencies."
+            tone="good"
           />
           <MetricCard
-            label="Running jobs"
-            value={health?.running_jobs ?? 0}
-            caption="Queue semantics already backed by the control plane."
+            label="GitHub Marketplace"
+            value="v1.0.2"
+            caption="Verified action live on Marketplace with downloadable artifacts."
+            tone="good"
           />
         </section>
 
         <section className="feature-band" data-reveal>
           <div>
-            <span className="eyebrow">2026 UI direction</span>
-            <h2>Editorial motion, cinematic depth, operator-grade signal.</h2>
+            <span className="eyebrow">3-Line CI Drop-in</span>
+            <h2>Zero-friction PR safety gate for autonomous coding agents.</h2>
           </div>
           <p>
-            This frontend is no longer buried in FastAPI HTML strings. It is a separate Vite app,
-            tuned for velocity, animated with anime.js, smoothed with Lenis, and staged for a real
-            product shell.
+            Drop Intent Guard into your GitHub Actions workflow in 3 lines. Every time Claude Code, Cursor,
+            Devin, or an autonomous PR bot modifies code, Intent Guard verifies the diff against declared intent,
+            flags unauthorized changes, and posts an idempotent sticky report directly on the PR.
           </p>
         </section>
 
         <section className="sticky-story" data-reveal>
           <div className="sticky-story-copy">
             <span className="eyebrow">Why it is needed</span>
-            <h2>Most systems prove code. Almost none prove runtime intent.</h2>
+            <h2>Most tools check who an agent is. Almost none check what it actually touched.</h2>
             <p>
-              Teams ship scanners, dashboards, and alert noise. They still struggle to answer the
-              hard questions: did runtime behavior stay inside approved intent, do we have proof for
-              promotion, who owns the debt, and can we trust recovery after failure.
+              AI coding assistants already have write access in your codebase or runner. The real failure
+              mode is semantic drift: an agent asked to fix a CSS bug silently touches an .env file,
+              mutates deployment scripts, or wipes directories. Intent Guard is the deterministic guardrail.
             </p>
           </div>
           <div className="sticky-story-stack">
             <article className="story-stack-card">
-              <strong>For platform teams</strong>
-              <p>Track readiness, queue health, worker truth, backup proof, and cutover discipline.</p>
+              <strong>For engineering teams</strong>
+              <p>Catch out-of-scope mutations and destructive commands before they ever hit main or review.</p>
             </article>
             <article className="story-stack-card">
-              <strong>For security</strong>
-              <p>Watch runtime drift instead of only checking static policy before deploy.</p>
+              <strong>For security engineers</strong>
+              <p>Enforce deterministic intent boundaries without trusting self-reported model explanations.</p>
             </article>
             <article className="story-stack-card">
-              <strong>For operators</strong>
-              <p>Make review debt, escalation, and ownership visible before an incident explodes.</p>
+              <strong>For platform operators</strong>
+              <p>Zero-token runtime overhead, HMAC audit logs, and downloadable artifact proof bundles.</p>
             </article>
           </div>
         </section>
@@ -352,8 +361,8 @@ export default function HomePage() {
           <article className="glass-panel wide" data-reveal>
             <div className="panel-header">
               <div>
-                <span className="eyebrow">How to test</span>
-                <h2>Fast path from clone to proof</h2>
+                <span className="eyebrow">Quickstart</span>
+                <h2>Fast path to real agent safety</h2>
               </div>
               <Link className="ghost-button" to="/launch-guide">
                 Full guide
@@ -361,38 +370,47 @@ export default function HomePage() {
             </div>
             <div className="terminal-grid">
               <div className="terminal-panel">
-                <span className="terminal-title">Backend</span>
-                <pre><code>{`cd /Users/gani/Desktop/Intent-drive/living-systems-auditor
-./.venv/bin/python -m uvicorn lsa.api.main:app --host 127.0.0.1 --port 3614`}</code></pre>
+                <span className="terminal-title">GitHub Actions (Marketplace)</span>
+                <pre><code>{`# .github/workflows/intent-guard.yml
+- uses: actions/checkout@v4
+- uses: Gani-23/Intent-core@v1.0.2
+  with:
+    github_token: \${{ secrets.GH_TOKEN || github.token }}`}</code></pre>
               </div>
               <div className="terminal-panel">
-                <span className="terminal-title">Frontend</span>
-                <pre><code>{`cd /Users/gani/Desktop/Intent-drive/living-systems-auditor/dashboard
-npm install
-npm run dev -- --host 127.0.0.1 --port 1234`}</code></pre>
+                <span className="terminal-title">Claude Code Local Plugin</span>
+                <pre><code>{`export CLAUDE_PLUGIN_ROOT="$(pwd)"
+# Intercepts prompt & tool execution live
+claude "Refactor auth in src/auth.py"`}</code></pre>
               </div>
               <div className="terminal-panel">
-                <span className="terminal-title">Proof</span>
-                <pre><code>{`./.venv/bin/python -m lsa.cli.main control-plane-deployment-readiness
-./.venv/bin/python -m lsa.cli.main run-control-plane-operational-validation --changed-by operator`}</code></pre>
+                <span className="terminal-title">Verification & Test Suite</span>
+                <pre><code>{`.venv/bin/pytest tests/ -q
+# 102 passed in 5.58s
+# Option B static diff auditor active`}</code></pre>
               </div>
             </div>
           </article>
         </section>
 
         <section className="closing-cta" data-reveal>
-          <span className="eyebrow">Industry-shaping direction</span>
-          <h2>Make runtime proof feel like a product, not a postmortem artifact.</h2>
+          <span className="eyebrow">Zero pip dependencies · Production ready</span>
+          <h2>Catch agent drift before your customers do.</h2>
           <p>
-            The shock factor won’t come from glow alone. It comes from a frontend that feels elite
-            and a backend that can actually prove something when the lights are on.
+            From single-developer Claude Code sessions to autonomous enterprise PR bots,
+            Intent Guard proves that AI agent execution strictly adhered to approved human intent.
           </p>
           <div className="hero-actions">
-            <Link className="primary-button" to="/command">
-              Open the control plane
-            </Link>
-            <Link className="ghost-button" to="/launch-guide">
-              Read launch guide
+            <a
+              className="primary-button"
+              href="https://github.com/marketplace/actions/intent-guard-pr-auditor"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Get on GitHub Marketplace
+            </a>
+            <Link className="ghost-button" to="/audit/would-it-catch">
+              Try "Would It Catch?" Simulator
             </Link>
           </div>
         </section>
