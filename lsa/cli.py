@@ -147,7 +147,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
 # ── 3. Benchmark Command ──────────────────────────────────────────────────────
 def cmd_benchmark(args: argparse.Namespace) -> int:
     print_banner()
-    print(f"{Colors.BOLD}Running Intent-Guard 20-Scenario Empirical Benchmark...{Colors.RESET}\n")
+    print(f"{Colors.BOLD}Running Intent-Guard 20-Scenario Invariant Regression Suite...{Colors.RESET}\n")
     report = run_benchmark()
     md = format_benchmark_markdown(report)
     print(md)
@@ -242,8 +242,12 @@ def main(argv: list[str] | None = None) -> int:
     p_gate.add_argument("--min-trust-score", type=int, default=80, help="Minimum trust score threshold")
     p_gate.add_argument("--json", action="store_true", help="Output JSON result")
 
-    # Benchmark
-    p_bench = subparsers.add_parser("benchmark", help="Run 20-scenario empirical drift detection benchmark")
+    # Benchmark / Invariant Regression Suite
+    p_bench = subparsers.add_parser(
+        "benchmark",
+        aliases=["regression", "test-suite"],
+        help="Run 20-scenario deterministic invariant regression suite",
+    )
     p_bench.add_argument("-o", "--output", help="Output path for JSON report")
     p_bench.add_argument("-m", "--markdown", help="Output path for Markdown report")
 
@@ -261,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_check(parsed)
     elif parsed.subcommand == "gate":
         return cmd_gate(parsed)
-    elif parsed.subcommand == "benchmark":
+    elif parsed.subcommand in ("benchmark", "regression", "test-suite"):
         return cmd_benchmark(parsed)
     elif parsed.subcommand == "hook":
         return cmd_hook(parsed)

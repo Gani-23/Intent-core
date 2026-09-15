@@ -7,8 +7,9 @@
 > **Runtime Semantic Drift Auditor & PR Safety Gate for AI Coding Agents**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-102%20passed-brightgreen.svg)](tests/)
-[![Dependencies](https://img.shields.io/badge/dependencies-zero%20external%20pip-success.svg)](action.yml)
+[![Tests](https://img.shields.io/badge/tests-115%20passed-brightgreen.svg)](tests/)
+[![PR Action](https://img.shields.io/badge/action%20runtime-zero%20pip%20deps-success.svg)](action.yml)
+[![Core API](https://img.shields.io/badge/api%20server-5%20dependencies-blue.svg)](pyproject.toml)
 [![Marketplace](https://img.shields.io/badge/marketplace-Intent%20Guard%20PR%20Auditor-blueviolet.svg)](https://github.com/marketplace/actions/intent-guard-pr-auditor)
 
 **Most agent-safety tools check who an AI coding agent is or what it's allowed to touch. This checks whether what it actually did still matches what you asked — which is the only thing that would have caught Replit deleting a production database during a code freeze.**
@@ -93,8 +94,10 @@ Pass 2 features a robust **multi-provider failsafe cascade**:
   benign, in-scope edit — verified by running it, not just reading it.
 - The three hook scripts run correctly against simulated Claude Code stdin
   end-to-end: capture → compare → report → rotate.
-- Every file compiles clean. Zero external dependencies — pure stdlib, so
-  there's nothing to `pip install` for the hooks themselves.
+- The agent hooks and GitHub Action runtime run purely on standard library Python
+  with zero external pip dependencies. (The optional hosted control plane API
+  server installed via `pip install -e .` requires 5 core packages: `fastapi`,
+  `pydantic`, `uvicorn`, `pyyaml`, and `httpx`).
 
 **A first pass, not a finished product:**
 - `CONSTRAINT_PHRASES` and `DESTRUCTIVE_PATTERNS` in `mutation_rules.py` are
@@ -199,7 +202,7 @@ For advanced CI setups (running Claude Code headlessly in CI, blocking merges on
 
 ## 🚀 Intent-Guard CLI & Pre-Tool Interceptor
 
-`intent-guard` provides a high-speed runtime binary for intercepting agent commands in real time, validating release gates, and running empirical benchmark suites.
+`intent-guard` provides a runtime binary for intercepting agent commands in real time, validating release gates, and running invariant regression suites.
 
 ```bash
 # 1. Evaluate an agent action before execution (sub-millisecond latency)
@@ -216,20 +219,23 @@ intent-guard hook
 # 4. Validate CI/CD release gate with signed proof bundle
 intent-guard gate -p .intent-guard/proof-bundles/latest.json
 
-# 5. Run the 20-scenario empirical drift benchmark
-intent-guard benchmark
+# 5. Run the deterministic invariant regression test suite
+intent-guard regression
 ```
 
-### Empirical Benchmark Performance
+### Deterministic Invariant Regression Suite
 
-Intent-Guard includes a built-in empirical evaluation benchmark measuring detection accuracy against 20 realistic agent drift and in-scope tasks:
+Intent-Guard includes a built-in regression test harness verifying pre-tool rules against 20 curated invariant cases (10 known destructive mutation patterns and 10 safe baseline developer tasks):
 
-| Metric | Score | Industry Context |
+| Invariant Verification | Result | Scope / Context |
 | :--- | :--- | :--- |
-| **Overall Accuracy** | **100.0%** (20/20) | Catches every destructive mutation |
-| **True Positive Rate (Drift Catch)** | **100.0%** | Destructive FS, SQL drops, credential leaks, RCE |
-| **False Positive Rate** | **0.0%** | Never blocks routine git, test, build, lint tools |
-| **Evaluation Latency** | **0.03 ms** | Zero human or agent delay (runs purely in-memory) |
+| **Regression Suite Pass Rate** | **100.0%** (20/20) | Guards against pre-tool rule regressions |
+| **Destructive Patterns Caught** | **10/10** | FS wipe, SQL drop/truncate, credential exfiltration, RCE pipe |
+| **Safe Dev Actions Permitted** | **10/10** | Routine git, pytest, build, and lint commands permitted |
+| **Evaluation Latency** | **0.03 ms** | Pure stdlib AST and regex check with zero latency |
+
+> [!NOTE]
+> This suite tests known deterministic invariant patterns to prevent regressions in regex and AST rules. For multi-turn semantic reviews and empirical findings from real agent runs, see the dogfooded session traces in `.intent-guard/archive/`.
 
 ---
 

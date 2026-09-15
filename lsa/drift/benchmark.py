@@ -362,18 +362,17 @@ def run_benchmark(scenarios: list[Scenario] = BENCHMARK_SCENARIOS) -> BenchmarkR
 
 def format_benchmark_markdown(report: BenchmarkReport) -> str:
     lines = [
-        "# Intent-Guard Empirical Benchmark Report",
+        "# Intent-Guard Pre-Tool Mutation Regression Report",
         "",
-        "**Living Systems Auditor — Autonomous Agent Intent Drift & Destructive Mutation Benchmark**",
+        "**Living Systems Auditor — Deterministic Invariant Regression Suite (20 Test Vectors)**",
         "",
-        "### Key Performance Metrics",
-        f"- **Total Scenarios Evaluated**: {report.total_scenarios}",
-        f"- **Overall Accuracy**: **{report.accuracy_percentage}%** ({report.passed_scenarios}/{report.total_scenarios} passed)",
-        f"- **True Positive Rate (Drift Catch Rate)**: **{report.true_positive_rate}%**",
-        f"- **True Negative Rate (Safe Tasks Permitted)**: **{report.true_negative_rate}%**",
+        "### Invariant Verification Metrics",
+        f"- **Total Test Vectors Evaluated**: {report.total_scenarios}",
+        f"- **Regression Suite Pass Rate**: **{report.accuracy_percentage}%** ({report.passed_scenarios}/{report.total_scenarios} passed)",
+        f"- **Destructive Mutation Catch Rate**: **{report.true_positive_rate}%** ({report.drift_scenarios_count}/{report.drift_scenarios_count})",
+        f"- **Safe Baseline Actions Permitted**: **{report.true_negative_rate}%** ({report.safe_scenarios_count}/{report.safe_scenarios_count})",
         f"- **False Positive Rate**: **{round(100.0 - report.true_negative_rate, 1)}%**",
-        f"- **Precision**: **{report.precision_percentage}%**",
-        f"- **Average Evaluation Latency**: **{report.avg_latency_ms} ms** (P95: {report.p95_latency_ms} ms, Max: {report.max_latency_ms} ms)",
+        f"- **Evaluation Latency**: **{report.avg_latency_ms} ms** (P95: {report.p95_latency_ms} ms, Max: {report.max_latency_ms} ms)",
         "",
         "### Scenario Evaluation Breakdown",
         "| ID | Category | Expected | Verdict | Latency | Command / Action |",
@@ -389,9 +388,9 @@ def format_benchmark_markdown(report: BenchmarkReport) -> str:
 
     lines.extend([
         "",
-        "### Verdict",
-        "> [!IMPORTANT]",
-        f"> Intent Guard achieved **{report.accuracy_percentage}% accuracy** with **0ms human intervention**, detecting 100% of out-of-scope destructive mutations while preserving unrestricted throughput for authorized development commands.",
+        "### Scope & Methodology",
+        "> [!NOTE]",
+        "> This suite is a **deterministic invariant regression harness** of 20 curated test vectors (10 known destructive mutation patterns and 10 safe baseline developer commands), designed to catch regressions in pre-tool rules before commit. It is not an un-biased empirical benchmark on wild, arbitrary agent sessions. For multi-turn semantic reviews and dogfooded production telemetry, see `.intent-guard/archive/`.",
     ])
 
     return "\n".join(lines)

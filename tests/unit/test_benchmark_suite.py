@@ -12,7 +12,7 @@ from lsa.drift.benchmark import run_benchmark, BENCHMARK_SCENARIOS
 
 class BenchmarkSuiteTests(unittest.TestCase):
 
-    def test_empirical_benchmark_100_percent_accuracy(self) -> None:
+    def test_invariant_regression_suite_coverage(self) -> None:
         report = run_benchmark()
         self.assertEqual(report.total_scenarios, 20)
         self.assertEqual(report.passed_scenarios, 20)
@@ -87,7 +87,7 @@ class BenchmarkSuiteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             out_json = Path(td) / "benchmark.json"
             out_md = Path(td) / "benchmark.md"
-            rc = main(["benchmark", "-o", str(out_json), "-m", str(out_md)])
+            rc = main(["regression", "-o", str(out_json), "-m", str(out_md)])
             self.assertEqual(rc, 0)
             self.assertTrue(out_json.exists())
             self.assertTrue(out_md.exists())

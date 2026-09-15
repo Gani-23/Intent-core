@@ -1,4 +1,4 @@
-name: "Intent Gate & Benchmark CI"
+name: "Intent Gate & Regression CI"
 
 on:
   pull_request:
@@ -11,8 +11,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  benchmark-and-gate:
-    name: Empirical Benchmark & Release Gate
+  regression-and-gate:
+    name: Invariant Regression Suite & Release Gate
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -29,10 +29,10 @@ jobs:
           pip install -e .
           pip install pytest httpx
 
-      - name: Run Intent-Guard 20-Scenario Benchmark
+      - name: Run Intent-Guard Invariant Regression Suite
         run: |
-          intent-guard benchmark --markdown benchmark-summary.md
-          cat benchmark-summary.md >> $GITHUB_STEP_SUMMARY
+          intent-guard regression --markdown regression-summary.md
+          cat regression-summary.md >> $GITHUB_STEP_SUMMARY
 
       - name: Generate Demonstration Proof Bundle
         run: |
