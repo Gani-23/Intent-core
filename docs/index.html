@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Would this have caught it? — Intent Guard</title>
+<meta name="description" content="Paste a task and a command. See, live, whether Intent Guard's real detection engine would have flagged it — the same logic that runs in production, ported faithfully, running in your browser." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#EAE6DC;
+    --paper-raised:#F2EFE7;
+    --ink:#16211D;
+    --ink-soft:#4B564F;
+    --rule:#8C8270;
+    --rule-soft:#D8D2C2;
+    --clear:#3D6B4F;
+    --clear-bg:#E4EBE3;
+    --flagged:#9A3324;
+    --flagged-bg:#F2E3DC;
+    --amber:#8A6420;
+  }
+  *{box-sizing:border-box;}
+  html{-webkit-text-size-adjust:100%;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'IBM Plex Mono', monospace;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:920px;margin:0 auto;padding:0 24px;}
+
+  header{padding:56px 0 40px;border-bottom:1px solid var(--rule-soft);}
+  .kicker{
+    font-size:13px;
+    color:var(--ink-soft);
+    margin:0 0 18px;
+    max-width:52ch;
+  }
+  h1{
+    font-family:'Fraunces', serif;
+    font-optical-sizing:auto;
+    font-weight:500;
+    font-size:clamp(32px,5vw,50px);
+    line-height:1.08;
+    margin:0 0 20px;
+    max-width:16ch;
+    letter-spacing:-0.01em;
+  }
+  .sub{
+    font-size:15px;
+    color:var(--ink-soft);
+    max-width:62ch;
+    margin:0;
+  }
+  .sub a{color:var(--ink);}
+
+  .honesty{
+    margin-top:28px;
+    padding:14px 16px;
+    background:var(--paper-raised);
+    border:1px solid var(--rule-soft);
+    font-size:12.5px;
+    color:var(--ink-soft);
+    max-width:62ch;
+  }
+
+  section.cases{padding:36px 0 8px;}
+  .cases-label{
+    font-family:'Fraunces', serif;
+    font-size:14px;
+    font-weight:500;
+    color:var(--ink-soft);
+    margin:0 0 14px;
+  }
+  .case-row{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+  }
+  .case-chip{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12.5px;
+    padding:8px 12px;
+    background:transparent;
+    border:1px solid var(--rule);
+    color:var(--ink);
+    cursor:pointer;
+    text-align:left;
+  }
+  .case-chip:hover{background:var(--paper-raised);}
+  .case-chip:active{transform:translateY(1px);}
+
+  .docket{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:1px;
+    background:var(--rule-soft);
+    margin-top:28px;
+    border:1px solid var(--rule-soft);
+  }
+  @media (max-width:640px){ .docket{grid-template-columns:1fr;} }
+
+  .field{background:var(--paper-raised);padding:22px;}
+  .field label{
+    display:block;
+    font-family:'Fraunces', serif;
+    font-size:14px;
+    font-weight:500;
+    margin-bottom:4px;
+  }
+  .field .hint{
+    font-size:12px;
+    color:var(--ink-soft);
+    margin:0 0 14px;
+  }
+  textarea{
+    width:100%;
+    resize:vertical;
+    min-height:96px;
+    background:var(--paper);
+    border:1px solid var(--rule-soft);
+    color:var(--ink);
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13.5px;
+    padding:12px;
+    line-height:1.5;
+  }
+  textarea:focus{outline:2px solid var(--ink);outline-offset:1px;}
+
+  .run-row{
+    display:flex;
+    align-items:center;
+    gap:16px;
+    padding:22px 0 4px;
+  }
+  button.run{
+    font-family:'Fraunces', serif;
+    font-size:16px;
+    font-weight:500;
+    background:var(--ink);
+    color:var(--paper);
+    border:none;
+    padding:13px 26px;
+    cursor:pointer;
+  }
+  button.run:hover{background:#233128;}
+  button.run:active{transform:translateY(1px);}
+  .run-note{font-size:12px;color:var(--ink-soft);}
+
+  .verdict{
+    margin-top:28px;
+    border:1px solid var(--rule-soft);
+    padding:0;
+    display:none;
+  }
+  .verdict.show{display:block;}
+  .verdict-head{
+    padding:22px 24px;
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    gap:12px;
+    flex-wrap:wrap;
+  }
+  .verdict.clear .verdict-head{background:var(--clear-bg);}
+  .verdict.flagged .verdict-head{background:var(--flagged-bg);}
+  .verdict-stamp{
+    font-family:'Fraunces', serif;
+    font-weight:600;
+    font-size:22px;
+    letter-spacing:-0.01em;
+  }
+  .verdict.clear .verdict-stamp{color:var(--clear);}
+  .verdict.flagged .verdict-stamp{color:var(--flagged);}
+  .verdict-sev{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    padding:4px 9px;
+    border:1px solid currentColor;
+  }
+  .verdict.clear .verdict-sev{color:var(--clear);}
+  .verdict.flagged .verdict-sev{color:var(--flagged);}
+  .verdict-body{padding:20px 24px 26px;font-size:13.5px;}
+  .verdict-body p{margin:0 0 10px;}
+  .verdict-body .constraint{
+    display:block;
+    margin-top:12px;
+    padding:10px 12px;
+    background:var(--paper);
+    border-left:3px solid var(--amber);
+    font-size:12.5px;
+  }
+
+  footer{
+    padding:48px 0 64px;
+    border-top:1px solid var(--rule-soft);
+    margin-top:56px;
+    font-size:12.5px;
+    color:var(--ink-soft);
+  }
+  footer a{color:var(--ink);}
+
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);}
+  @media (prefers-reduced-motion:no-preference){
+    .verdict.show{animation:rise 220ms ease-out;}
+  }
+  @keyframes rise{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <p class="kicker">Intent Guard — live detection preview</p>
+    <h1>Would this have caught it?</h1>
+    <p class="sub">Most agent-safety tools check who an AI coding agent is, or what it's allowed to touch. Intent Guard checks whether what it actually did still matches what it was told to do. Paste a real task and a real command below — or pick a documented incident — and see the actual verdict.</p>
+    <div class="honesty">This runs the real destructive-pattern and constraint-matching rules from Intent Guard's open-source detection engine, ported line-for-line into this page, entirely in your browser. Nothing you type is sent anywhere. <a href="https://github.com/Gani-23/Intent-core/blob/main/lsa/drift/mutation_rules.py">See the source it's ported from.</a></div>
+  </header>
+
+  <section class="cases">
+    <p class="cases-label">Or start from a documented incident</p>
+    <div class="case-row" id="caseRow"></div>
+  </section>
+
+  <form id="docketForm">
+    <div class="docket">
+      <div class="field">
+        <label for="taskText">Declared — what the agent was told</label>
+        <p class="hint">The task, instruction, or constraint given to the agent.</p>
+        <textarea id="taskText" placeholder="e.g. Read-only audit of the users table. Do not modify anything."></textarea>
+      </div>
+      <div class="field">
+        <label for="cmdText">Observed — what the agent actually ran</label>
+        <p class="hint">The command, query, or file operation it executed.</p>
+        <textarea id="cmdText" placeholder="e.g. UPDATE users SET verified = true WHERE id = 445;"></textarea>
+      </div>
+    </div>
+    <div class="run-row">
+      <button type="submit" class="run">Check</button>
+      <span class="run-note">Runs instantly, in this tab.</span>
+    </div>
+  </form>
+
+  <div class="verdict" id="verdict">
+    <div class="verdict-head">
+      <span class="verdict-stamp" id="verdictStamp"></span>
+      <span class="verdict-sev" id="verdictSev"></span>
+    </div>
+    <div class="verdict-body" id="verdictBody"></div>
+  </div>
+
+  <footer>
+    Intent Guard is an open-source drift auditor for AI coding agents — <a href="https://github.com/Gani-23/Intent-core">source, docs, and the GitHub Action on the repo</a>. This page checks pattern-level drift only; it does not run the LLM-backed semantic review pass that catches drift no regex can.
+  </footer>
+</div>
+
+<script>
+// Ported faithfully from lsa/drift/mutation_rules.py and lsa/drift/intent_fingerprint.py.
+// Kept in sync by hand — if the Python source changes, update this block to match.
+
+const DESTRUCTIVE_PATTERNS = [
+  ["filesystem-wide delete", /\brm\s+-[a-z]*r[a-z]*f\b|\brm\s+-[a-z]*f[a-z]*r\b/i],
+  ["force push", /\bgit\s+push\b.*(--force|-f)\b/i],
+  ["sql destructive", /\b(drop\s+table|drop\s+database|truncate\s+table|delete\s+from\s+\S+|alter\s+table\s+\S+\s+drop\b)/i],
+  ["migration reset", /\bmigrate\s+(diff|reset)\b.*shadow/i],
+  ["permissive chmod", /\bchmod\s+(-R\s+)?777\b/i],
+  ["remote shell execution pipe", /\b(curl|wget)\b.*\|\s*(bash|sh|zsh)\b/i],
+  ["system credential touch", /(?:^|\s|\/)(etc\/shadow|etc\/passwd)\b/i],
+  ["credential exfiltration attempt", /\b(curl|wget|nc|ncat)\b.*(@\.env|@id_rsa|\.ssh\/id)/i],
+];
+
+const PLAIN_DELETION_PATTERNS = [
+  ["plain file delete", /\b(rm(\s+-[a-z0-9]*)?\s+|unlink\s+|os\.remove\b|os\.unlink\b|del\s+|Remove-Item\b)/i],
+];
+
+const CONSTRAINT_PHRASES = [
+  /\b(do not|don't|never)\b.{0,40}\b(delete|drop|truncate|wipe|remove|modify|change|alter|edit|touch)\b/i,
+  /\bcode freeze\b/i,
+  /\bread[- ]only\b/i,
+  /\bwithout (my )?(explicit )?approval\b/i,
+  /\bdo not touch (prod|production)\b/i,
+  /\bnever run destructive\b/i,
+  /\bno\s+writes?\b/i,
+  /\bno\s+modifications?\b/i,
+  /\bonly\s+read\b/i,
+];
+
+const READ_ONLY_SCOPE_RE = /\bread[- ]only\b|\bnever\s+modify\b|\bdo\s+not\s+(?:modify|change|edit|write|alter|touch)\b|\bdon'?t\s+(?:modify|change|edit|write|alter|touch)\b|\bno\s+writes?\b|\bno\s+modifications?\b|\bonly\s+read\b|\bjust\s+read\b|\bdo\s+not\s+touch\s+anything\b|\bnever\s+touch\s+anything\b/i;
+
+function findConstraints(taskText){
+  const hits = [];
+  for(const re of CONSTRAINT_PHRASES){
+    const m = taskText.match(re);
+    if(m) hits.push(m[0]);
+  }
+  return hits;
+}
+
+function firstMatch(patterns, haystack){
+  for(const [label, re] of patterns){
+    if(re.test(haystack)) return label;
+  }
+  return null;
+}
+
+function evaluate(taskText, cmdText){
+  const haystack = `${cmdText} ${cmdText}`; // command + target, both are the same field here
+  const constraints = findConstraints(taskText);
+  const isReadOnly = READ_ONLY_SCOPE_RE.test(taskText);
+
+  const destructiveHit = firstMatch(DESTRUCTIVE_PATTERNS, haystack);
+  const plainDeleteHit = firstMatch(PLAIN_DELETION_PATTERNS, haystack);
+
+  if(destructiveHit){
+    const contradicts = constraints.length > 0;
+    return {
+      flagged: true,
+      severity: contradicts ? "CRITICAL" : "HIGH",
+      label: destructiveHit,
+      reason: contradicts
+        ? `This matches a destructive pattern ("${destructiveHit}"), and the declared task contains an explicit constraint it appears to violate.`
+        : `This matches a destructive pattern ("${destructiveHit}"), which carries irreversible risk regardless of stated scope.`,
+      constraint: contradicts ? constraints[0] : null,
+    };
+  }
+
+  if(isReadOnly && plainDeleteHit){
+    return {
+      flagged: true,
+      severity: "HIGH",
+      label: plainDeleteHit,
+      reason: `The declared task establishes a read-only / no-modification scope, and this action performs a deletion — a violation even though it isn't independently "destructive" enough to flag on its own.`,
+      constraint: null,
+    };
+  }
+
+  return {
+    flagged: false,
+    severity: "LOW",
+    label: null,
+    reason: `No destructive pattern matched, and no declared constraint in the task appears to be violated by this action.`,
+    constraint: null,
+  };
+}
+
+const CASES = [
+  {
+    name: "Replit — prod DB deleted mid code-freeze",
+    task: "We are in a code freeze this week. Do not touch production data under any circumstances — read-only investigation only.",
+    cmd: "DROP TABLE users; DROP TABLE orders; DROP TABLE payments;",
+  },
+  {
+    name: "PocketOS-style — read-only audit, quiet write",
+    task: "Please only read the config files and summarize what you find. Do not modify anything in this repository.",
+    cmd: "UPDATE users SET verified = true WHERE id = 445;",
+    note: "Pattern matching alone reads this as clean — nothing about \u201cUPDATE \u2026 WHERE\u201d looks dangerous. This is the exact case Intent Guard's second detection pass exists for: an LLM-based semantic review that reads the task and the action the way a human reviewer would, and catches drift no regex list ever will.",
+  },
+  {
+    name: "Force-push over a protected branch",
+    task: "Rebase my feature branch on main and clean up the commit history.",
+    cmd: "git push origin main --force",
+  },
+  {
+    name: "Ordinary, unremarkable dev work",
+    task: "Fix the failing test in test_login.py and update the changelog.",
+    cmd: "pytest tests/test_login.py -k test_password_reset",
+  },
+];
+
+const caseRow = document.getElementById("caseRow");
+CASES.forEach((c) => {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "case-chip";
+  btn.textContent = c.name;
+  btn.addEventListener("click", () => {
+    document.getElementById("taskText").value = c.task;
+    document.getElementById("cmdText").value = c.cmd;
+    runCheck(c.note || null);
+    document.getElementById("verdict").scrollIntoView({behavior:"smooth", block:"center"});
+  });
+  caseRow.appendChild(btn);
+});
+
+function runCheck(caseNote){
+  const taskText = document.getElementById("taskText").value.trim();
+  const cmdText = document.getElementById("cmdText").value.trim();
+  const verdict = document.getElementById("verdict");
+
+  if(!taskText || !cmdText){
+    verdict.classList.remove("show","clear","flagged");
+    return;
+  }
+
+  const result = evaluate(taskText, cmdText);
+  verdict.classList.add("show");
+  verdict.classList.toggle("clear", !result.flagged);
+  verdict.classList.toggle("flagged", result.flagged);
+
+  document.getElementById("verdictStamp").textContent = result.flagged
+    ? "Flagged as drift"
+    : "No drift detected";
+  document.getElementById("verdictSev").textContent = `severity: ${result.severity}`;
+
+  let bodyHtml = `<p>${result.reason}</p>`;
+  if(result.constraint){
+    bodyHtml += `<span class="constraint">Matched constraint in declared task: "${result.constraint}"</span>`;
+  }
+  if(caseNote){
+    bodyHtml += `<span class="constraint">${caseNote}</span>`;
+  }
+  document.getElementById("verdictBody").innerHTML = bodyHtml;
+}
+
+document.getElementById("docketForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  runCheck(null);
+});
+</script>
+</body>
+</html>

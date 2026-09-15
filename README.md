@@ -14,7 +14,11 @@
 
 **Most agent-safety tools check who an AI coding agent is or what it's allowed to touch. This checks whether what it actually did still matches what you asked — which is the only thing that would have caught Replit deleting a production database during a code freeze.**
 
+Intent Guard is not an identity platform, an agent firewall, or a SIEM. If you need those, use one — and use this alongside it for the one thing they don't check: behavior against declared intent.
+
 Intent Guard runs as a lightweight GitHub Action on Pull Requests or as a local hook for AI coding agents (Claude Code, Cursor, Copilot workspaces, OpenCode). It verifies that an agent's proposed changes and tool executions strictly adhere to declared intent, catching unauthorized mutations, destructive commands, and semantic drift before they hit production.
+
+> 🎮 **Live In-Browser Demo:** [Try "Would this have caught it?"](https://gani-23.github.io/Intent-core/) — test real tasks and destructive commands directly in your browser with zero backend or signup.
 
 ---
 
