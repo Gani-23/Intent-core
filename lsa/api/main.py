@@ -32,6 +32,10 @@ from lsa.storage.sqlite_store import SQLiteEventStore
 
 _STORE = SQLiteEventStore()
 
+from lsa.api.control_plane import router as control_plane_router, init_control_plane_db
+init_control_plane_db()
+app.include_router(control_plane_router)
+
 # C1: API key bootstrap
 # Only seed explicit LSA_API_KEY if configured.
 # If LSA_API_KEY is not set, only seed default dev key "lsa-test-key-12345" in explicit
@@ -372,42 +376,6 @@ def get_org_trust_score(
     }
 
 
-# Dashboard compatibility mock stubs (explicitly flagged mock: true per F3)
-@app.get("/maintenance/control-plane-deployment-readiness")
-def get_deployment_readiness():
-    return {
-        "mock": True,
-        "mock_notice": "Placeholder endpoint for enterprise deployment readiness review queue",
-        "evaluated_at": "2026-09-04T00:00:00Z",
-        "environment_name": "production",
-        "runtime_validation": {"status": "healthy", "blockers": []},
-        "live_workload_target_validation": {"status": "healthy", "blockers": []},
-        "live_workload_proof_validation": {"status": "healthy", "blockers": []},
-        "backup_validation": {"status": "healthy", "blockers": []},
-        "backup_export_validation": {"status": "healthy", "blockers": []},
-        "observability_export_validation": {"status": "healthy", "blockers": []},
-        "runtime_validation_change_control_requests": [],
-        "owner_team_rollups": [],
-        "blocked_owner_team_count": 0,
-    }
-
-
-@app.get("/analytics/control-plane")
-def get_analytics(days: int = 14):
-    return {
-        "mock": True,
-        "mock_notice": "Placeholder endpoint for control plane analytics metrics",
-        "generated_at": "2026-09-04T00:00:00Z",
-        "days": days,
-        "active_organizations": 1,
-        "total_audits_recorded": 0,
-        "total_drift_incidents": 0,
-    }
-
-
-@app.get("/control-plane-alerts")
-def get_alerts(limit: int = 12):
-    return []
 
 
 # ── L3.2: Badge Endpoints ─────────────────────────────────────────────────────
