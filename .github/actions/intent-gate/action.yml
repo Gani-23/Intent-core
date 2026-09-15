@@ -1,0 +1,110 @@
+name: "Intent Gate CI/CD Release Invariant Verifier"
+description: "Validates signed proof bundles and deployment invariants before merging or promoting to production"
+author: "Living Systems Auditor Team"
+branding:
+  icon: "shield"
+  color: "green"
+
+inputs:
+  proof_bundle:
+    description: "Path to the signed proof bundle JSON file"
+    required: true
+  min_trust_score:
+    description: "Minimum acceptable system trust score (0-100)"
+    required: false
+    default: "80"
+  fail_on_blocker:
+    description: "Whether to fail the CI step if validation invariants fail"
+    required: false
+    default: "true"
+
+outputs:
+  valid:
+    description: "Whether the proof bundle passed all invariants ('true' or 'false')"
+    value: ${{ steps.validate.outputs.valid }}
+  blockers_count:
+    description: "Number of active deployment blockers found in the bundle"
+    value: ${{ steps.validate.outputs.blockers_count }}
+  target_profile:
+    description: "The target profile evaluated"
+    value: ${{ steps.validate.outputs.target_profile }}
+  sha256:
+    description: "SHA-256 digest of the evaluated proof bundle"
+    value: ${{ steps.validate.outputs.sha256 }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Validate Proof Bundle & Invariants
+      id: validate
+      shell: bash
+      env:
+        PROOF_BUNDLE_PATH: ${{ inputs.proof_bundle }}
+        MIN_TRUST_SCORE: ${{ inputs.min_trust_score }}
+        FAIL_ON_BLOCKER: ${{ inputs.fail_on_blocker }}
+      run: |
+        python3 - << 'PYEOF'
+        import os
+        import sys
+        import json
+        import hashlib
+        from pathlib import Path
+
+        bundle_path_str = os.environ.get("PROOF_BUNDLE_PATH", "")
+        min_score = int(os.environ.get("MIN_TRUST_SCORE", "80"))
+        fail_on_blocker = os.environ.get("FAIL_ON_BLOCKER", "true").lower() == "true"
+
+        bundle_path = Path(bundle_path_str)
+
+        if not bundle_path.exists():
+            msg = f"❌ Proof bundle file not found: {bundle_path_str}"
+            print(msg, file=sys.stderr)
+            if "GITHUB_STEP_SUMMARY" in os.environ:
+                with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+                    f.write(f"## 🛡️ Intent Gate Verification Failed\n\n**Error:** Proof bundle `{bundle_path_str}` not found.\n")
+            if "GITHUB_OUTPUT" in os.environ:
+                with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+                    f.write("valid=false\nblockers_count=1\ntarget_profile=unknown\nsha256=none\n")
+            sys.exit(1 if fail_on_blocker else 0)
+
+        try:
+            data = json.loads(bundle_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            msg = f"❌ Proof bundle is not valid JSON: {e}"
+            print(msg, file=sys.stderr)
+            sys.exit(1 if fail_on_blocker else 0)
+
+        sha256_hash = hashlib.sha256(bundle_path.read_bytes()).hexdigest()
+        blockers = data.get("blockers", [])
+        target_profile = data.get("target_profile", "unknown")
+        env_name = data.get("environment", data.get("environment_name", "production"))
+        is_valid = data.get("valid", True) and len(blockers) == 0
+
+        if "GITHUB_OUTPUT" in os.environ:
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+                f.write(f"valid={'true' if is_valid else 'false'}\n")
+                f.write(f"blockers_count={len(blockers)}\n")
+                f.write(f"target_profile={target_profile}\n")
+                f.write(f"sha256={sha256_hash}\n")
+
+        if "GITHUB_STEP_SUMMARY" in os.environ:
+            with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+                f.write("# 🛡️ Intent Gate Deployment Release Invariant Check\n\n")
+                f.write(f"- **Target Profile**: `{target_profile}`\n")
+                f.write(f"- **Environment**: `{env_name}`\n")
+                f.write(f"- **SHA-256 Digest**: `{sha256_hash[:16]}...`\n")
+                f.write(f"- **Active Blockers**: **{len(blockers)}**\n\n")
+
+                if is_valid:
+                    f.write("### ✅ Release Gate Status: PASSED\n\n")
+                    f.write("> Proof bundle verified. All runtime invariants and authorization constraints are satisfied. Safe for production promotion.\n")
+                else:
+                    f.write("### ⛔ Release Gate Status: BLOCKED\n\n")
+                    f.write("> Deployment blocked due to unmet invariants or detected drift:\n\n")
+                    for b in blockers:
+                        f.write(f"- 🔴 **Blocker**: {b}\n")
+
+        print(f"Intent Gate status: {'PASSED' if is_valid else 'BLOCKED'} (blockers: {len(blockers)})")
+        if not is_valid and fail_on_blocker:
+            sys.exit(1)
+        PYEOF

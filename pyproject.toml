@@ -20,6 +20,9 @@ dependencies = [
   "httpx>=0.28.0",
 ]
 
+[project.scripts]
+intent-guard = "lsa.cli:main"
+
 [project.optional-dependencies]
 api = [
   "fastapi>=0.115.0,<0.116.0",

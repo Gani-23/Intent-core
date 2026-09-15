@@ -11,9 +11,12 @@ from lsa.drift.models import DriftAlert, ObservedEvent
 DESTRUCTIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("filesystem-wide delete", re.compile(r"\brm\s+-[a-z]*r[a-z]*f\b|\brm\s+-[a-z]*f[a-z]*r\b", re.I)),
     ("force push", re.compile(r"\bgit\s+push\b.*(--force|-f)\b", re.I)),
-    ("sql destructive", re.compile(r"\b(drop\s+table|drop\s+database|truncate\s+table|delete\s+from\s+\S+)", re.I)),
+    ("sql destructive", re.compile(r"\b(drop\s+table|drop\s+database|truncate\s+table|delete\s+from\s+\S+|alter\s+table\s+\S+\s+drop\b)", re.I)),
     ("migration reset", re.compile(r"\bmigrate\s+(diff|reset)\b.*shadow", re.I)),
     ("permissive chmod", re.compile(r"\bchmod\s+(-R\s+)?777\b", re.I)),
+    ("remote shell execution pipe", re.compile(r"\b(curl|wget)\b.*\|\s*(bash|sh|zsh)\b", re.I)),
+    ("system credential touch", re.compile(r"(?:^|\s|/)(etc/shadow|etc/passwd)\b", re.I)),
+    ("credential exfiltration attempt", re.compile(r"\b(curl|wget|nc|ncat)\b.*(@\.env|@id_rsa|\.ssh/id)", re.I)),
 ]
 
 # Plain file-deletion / mutation operations (F2).
@@ -28,7 +31,7 @@ PLAIN_DELETION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 # the target is something the human's own task already named, since touching
 # a credential file the task is literally about is expected, not drift.
 SENSITIVE_TOUCH_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("credential file touch", re.compile(r"\.env(\.\w+)?$|\bid_rsa\b|\bcredentials\.json\b", re.I)),
+    ("credential file touch", re.compile(r"\.env(\.\w+)?$|\bid_rsa\b|\bcredentials\.json\b|(?:^|\s|/)(etc/shadow|etc/passwd)\b", re.I)),
 ]
 
 # Phrases that, if present in the human's own task description, establish an
